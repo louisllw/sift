@@ -23,9 +23,9 @@ using rules. One small container, **zero Python dependencies** (stdlib only).
 
 ## Watch
 
-<!-- DRAG THE VIDEO HERE: on github.com, edit this file, delete this comment line, and drag
-     sift-promo.mp4 from your Downloads onto this spot. GitHub uploads it and inserts a
-     user-attachments link that plays inline. Then commit. -->
+https://github.com/user-attachments/assets/fbd6efb0-804f-4553-bbb5-ff20363f56a7
+
+k that plays inline. Then commit. -->
 
 ## Screenshots
 
