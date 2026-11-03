@@ -23,9 +23,7 @@ using rules. One small container, **zero Python dependencies** (stdlib only).
 
 ## Watch
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/fbd6efb0-804f-4553-bbb5-ff20363f56a7" width="760" controls muted loop playsinline></video>
-</p>
+https://github.com/user-attachments/assets/fbd6efb0-804f-4553-bbb5-ff20363f56a7
 
 ## Screenshots
 
