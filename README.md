@@ -24,9 +24,11 @@ using rules. One small container, **zero Python dependencies** (stdlib only).
 ## Watch
 
 <p align="center">
-  <video src="https://github.com/louisllw/sift/releases/download/v0.1.0/sift-promo.mp4" poster="https://raw.githubusercontent.com/louisllw/sift/main/assets/social-preview.png" width="760" controls muted loop playsinline></video>
+  <a href="https://github.com/louisllw/sift/blob/main/assets/sift-promo.mp4">
+    <img src="assets/social-preview.png" alt="▶ Watch the Sift launch video" width="760">
+  </a>
 </p>
-<p align="center"><a href="https://github.com/louisllw/sift/releases/download/v0.1.0/sift-promo.mp4">▶ Watch the 25-second launch video</a></p>
+<p align="center"><a href="https://github.com/louisllw/sift/blob/main/assets/sift-promo.mp4">▶ Watch the 25-second launch video</a> — plays in your browser</p>
 
 ## Screenshots
 
