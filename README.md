@@ -21,6 +21,12 @@ read-only diagnostics on any host** from a web console or Telegram.
 The AI is **optional**: with no model configured, Sift still de-dupes, routes and digests
 using rules. One small container, **zero Python dependencies** (stdlib only).
 
+## Watch
+
+<!-- DRAG THE VIDEO HERE: on github.com, edit this file, delete this comment line, and drag
+     sift-promo.mp4 from your Downloads onto this spot. GitHub uploads it and inserts a
+     user-attachments link that plays inline. Then commit. -->
+
 ## Screenshots
 
 <p align="center">
