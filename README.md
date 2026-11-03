@@ -21,6 +21,17 @@ read-only diagnostics on any host** from a web console or Telegram.
 The AI is **optional**: with no model configured, Sift still de-dupes, routes and digests
 using rules. One small container, **zero Python dependencies** (stdlib only).
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/01-dashboard.png" alt="Sift dashboard — fleet status, helper agents and AI-triaged events" width="860">
+</p>
+<p align="center">
+  <img src="docs/screenshots/02-console.png" alt="Console — run read-only diagnostics on any host" width="420">
+  &nbsp;
+  <img src="docs/screenshots/04-settings.png" alt="Settings — teach the AI about your setup" width="420">
+</p>
+
 ## Why
 
 Self-hosters drown in notifications — hourly "update available" nags, flapping indexers,

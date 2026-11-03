@@ -292,7 +292,7 @@ async function refreshDash(){
   const ok=!down.length&&!silent.length;
   const issues=[...down.map(d=>d.server+" down"),...silent.map(s=>s.host+" silent")];
   $("#status").innerHTML=`<div class="status ${ok?'good':'bad'}"><div class="glyph">${ok?ICON.check:ICON.bell}</div>
-    <div><div class="big">${ok?"All systems operational":issues.length+" issue"+(issues.length>1?"s":"")+" need attention"}</div>
+    <div><div class="big">${ok?"All systems operational":issues.length+" issue"+(issues.length>1?"s need":" needs")+" attention"}</div>
     <div class="sub">${ok?(mons.length+" targets monitored · "+crit.length+" unresolved alerts in events"):esc(issues.slice(0,3).join(" · "))}</div></div></div>`;
   const hp=$("#health"); if(hp)hp.innerHTML=`<span class="dot ${ok?'ok live':'down'}"></span><span>${ok?"All operational":issues.length+" issue"+(issues.length>1?"s":"")}</span>`;
 
