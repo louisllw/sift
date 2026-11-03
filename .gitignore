@@ -1,0 +1,19 @@
+# --- secrets / live state (never commit) ---
+/data/*
+!/data/.gitkeep
+config.json
+config.test.json
+compose.yml
+*.db
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- editors / os ---
+.DS_Store
+.idea/
+.vscode/
+*.log

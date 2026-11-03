@@ -1,0 +1,26 @@
+[Unit]
+# Sift exec daemon — long-polls the server for read-only allowlisted diagnostics.
+# Install: copy sift-agentd.sh + agent.env into /opt/sift-agent/, then:
+#   sudo cp sift-agentd.service /etc/systemd/system/
+#   sudo systemctl enable --now sift-agentd
+Description=Sift exec daemon (read-only diagnostics)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Most diagnostics (smartctl, zpool, journalctl -u, docker) want root; the allowlist bounds
+# what can actually run. To run unprivileged instead, drop User= and grant the specific
+# sudoers/group rights those binaries need.
+User=root
+ExecStart=/opt/sift-agent/sift-agentd.sh
+Restart=always
+RestartSec=5
+# defence in depth: the daemon only ever reads
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/tmp/sift-agent
+
+[Install]
+WantedBy=multi-user.target

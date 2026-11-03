@@ -1,0 +1,14 @@
+# Generic compose for running Sift anywhere.
+# 1) cp config.example.json data/config.json  (then edit it)
+# 2) docker compose -f compose.example.yml up -d --build
+services:
+  sift:
+    build: .
+    container_name: sift
+    restart: unless-stopped
+    volumes:
+      - ./data:/data          # holds config.json + sift.db (keep your secrets here, not in the image)
+    ports:
+      - "8130:8130"           # ingest + (future) web UI. Bind to 127.0.0.1:8130:8130 to keep it host-local.
+    # If you want Sift on an existing user-defined network instead of publishing a port,
+    # drop `ports:` and add it to that network so other containers reach it as http://sift:8130.

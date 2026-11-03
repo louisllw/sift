@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sift</title>
+<style>
+  /* ---- tokens: one committed dark world (homelab dashboard, offline-capable, no CDN) ---- */
+  :root{
+    color-scheme:dark;
+    --bg:#0d0f14; --surface:#12151d; --card:#161a22; --raise:#1b2029;
+    --line:#242a35; --line-2:#1d222c;
+    --fg:#e7eaf1; --dim:#9aa3b2; --mut:#616b7b;
+    --accent:#4d7cfe; --accent-ink:#fff; --accent-soft:rgba(77,124,254,.14);
+    --ok:#3fb950; --down:#f0564f; --warn:#d8a33a; --info:#58a6ff;
+    --ok-soft:rgba(63,185,80,.14); --down-soft:rgba(240,86,79,.15);
+    --warn-soft:rgba(216,163,58,.15); --neu-soft:rgba(255,255,255,.055);
+    --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,system-ui,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --r:13px; --r-sm:9px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font:400 14px/1.55 var(--sans);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  ::selection{background:var(--accent-soft);color:#fff}
+  ::-webkit-scrollbar{width:11px;height:11px}
+  ::-webkit-scrollbar-thumb{background:#2a313d;border:3px solid var(--bg);border-radius:8px}
+  ::-webkit-scrollbar-thumb:hover{background:#39414f}
+  *{scrollbar-width:thin;scrollbar-color:#2a313d var(--bg)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+  a{color:var(--accent);text-decoration:none}
+  svg{display:block}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- app shell ---- */
+  #app{min-height:100%}
+  .shell{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+  .side{background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;
+    padding:16px 12px;gap:4px;position:sticky;top:0;height:100vh}
+  .brand{display:flex;align-items:center;gap:10px;padding:6px 10px 16px}
+  .brand .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(145deg,#2b3448,#171b24);
+    border:1px solid var(--line);display:grid;place-items:center;color:var(--accent)}
+  .brand b{font-size:16px;letter-spacing:-.01em}
+  .brand small{display:block;color:var(--mut);font-size:11px;letter-spacing:.02em;margin-top:-2px}
+  .nav{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+  .nav button{display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;border:0;
+    color:var(--dim);padding:9px 11px;border-radius:var(--r-sm);font:inherit;font-size:13.5px;cursor:pointer;
+    transition:background .12s,color .12s}
+  .nav button:hover{background:var(--neu-soft);color:var(--fg)}
+  .nav button.on{background:var(--accent-soft);color:#dbe6ff}
+  .nav button.on svg{color:var(--accent)}
+  .nav button svg{width:18px;height:18px;color:var(--mut);flex:none}
+  .nav button.on svg,.nav button:hover svg{color:inherit}
+  .side .foot{margin-top:auto;display:flex;flex-direction:column;gap:8px;padding-top:12px;border-top:1px solid var(--line-2)}
+  .health{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:var(--r-sm);background:var(--card);
+    border:1px solid var(--line-2);font-size:12.5px;color:var(--dim)}
+  .signout{display:flex;align-items:center;gap:9px;background:none;border:0;color:var(--mut);padding:8px 11px;
+    border-radius:var(--r-sm);font:inherit;font-size:13px;cursor:pointer;transition:color .12s,background .12s}
+  .signout:hover{color:var(--fg);background:var(--neu-soft)}
+  .signout svg{width:16px;height:16px}
+
+  /* ---- content ---- */
+  .content{padding:28px 32px 56px;max-width:960px;animation:rise .18s ease-out}
+  @keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.content{animation:none}*{transition:none!important}}
+  .top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px}
+  .top h1{margin:0;font-size:21px;font-weight:600;letter-spacing:-.02em}
+  .top p{margin:3px 0 0;color:var(--mut);font-size:13px}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r);margin-bottom:18px;overflow:hidden}
+  .panel>.hd{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line-2)}
+  .panel>.hd h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.01em}
+  .panel>.hd .count{color:var(--mut);font-size:12px;font-weight:500}
+  .panel>.bd{padding:6px 0}
+  .panel.pad>.bd{padding:16px}
+
+  /* rows */
+  .row{display:flex;align-items:center;gap:12px;padding:11px 16px;transition:background .1s}
+  .row+.row{border-top:1px solid var(--line-2)}
+  .row:hover{background:var(--neu-soft)}
+  .row .name{font-weight:500;font-size:13.5px}
+  .row .meta{margin-left:auto;color:var(--dim);font-size:12.5px;text-align:right}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;position:relative}
+  .dot.ok{background:var(--ok)} .dot.down{background:var(--down)} .dot.unk{background:var(--mut)}
+  .dot.live::after{content:"";position:absolute;inset:-4px;border-radius:50%;background:inherit;opacity:.35;animation:pulse 2.4s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(.6);opacity:.5}100%{transform:scale(1.9);opacity:0}}
+
+  /* status headline */
+  .status{display:flex;align-items:center;gap:13px;padding:17px 18px;border-radius:var(--r);
+    border:1px solid var(--line);background:var(--card);margin-bottom:18px}
+  .status .big{font-size:15px;font-weight:600}
+  .status .sub{color:var(--mut);font-size:12.5px;margin-top:1px}
+  .status.good{border-color:rgba(63,185,80,.3);background:linear-gradient(90deg,var(--ok-soft),transparent 60%)}
+  .status.bad{border-color:rgba(240,86,79,.35);background:linear-gradient(90deg,var(--down-soft),transparent 60%)}
+  .status .glyph{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;flex:none}
+  .status.good .glyph{background:var(--ok-soft);color:var(--ok)} .status.bad .glyph{background:var(--down-soft);color:var(--down)}
+
+  /* events */
+  .ev{display:grid;grid-template-columns:76px 1fr auto;align-items:baseline;gap:12px;padding:10px 16px}
+  .ev+.ev{border-top:1px solid var(--line-2)}
+  .ev:hover{background:var(--neu-soft)}
+  .pill{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;
+    border-radius:999px;text-align:center;white-space:nowrap}
+  .pill.critical{background:var(--down-soft);color:#ff8f8b} .pill.urgent{background:var(--warn-soft);color:#e8c06a}
+  .pill.routine,.pill.noise{background:var(--neu-soft);color:var(--dim)}
+  .ev .src{color:var(--dim);font-family:var(--mono);font-size:12px}
+  .ev .msg{color:var(--fg);font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ev .ago{color:var(--mut);font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  /* buttons */
+  .btn{display:inline-flex;align-items:center;gap:7px;font:inherit;font-size:13px;font-weight:500;cursor:pointer;
+    border-radius:var(--r-sm);padding:8px 13px;border:1px solid transparent;transition:background .12s,border-color .12s,opacity .12s}
+  .btn svg{width:15px;height:15px}
+  .btn.primary{background:var(--accent);color:var(--accent-ink);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .btn.primary:hover{background:#5e89ff}
+  .btn.ghost{background:var(--raise);border-color:var(--line);color:var(--fg)}
+  .btn.ghost:hover{background:#222836;border-color:#333c4a}
+  .btn:active{transform:translateY(.5px)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn.sm{padding:6px 10px;font-size:12.5px}
+
+  /* forms */
+  .grp{padding:16px}
+  .grp+.grp{border-top:1px solid var(--line-2)}
+  label.lbl{display:block;color:var(--dim);font-size:11.5px;font-weight:500;letter-spacing:.03em;
+    text-transform:uppercase;margin:14px 0 5px}
+  label.lbl:first-child{margin-top:0}
+  input,select,textarea{width:100%;background:#0b0d12;border:1px solid var(--line);color:var(--fg);
+    padding:9px 11px;border-radius:var(--r-sm);font:14px/1.5 var(--sans);transition:border-color .12s,box-shadow .12s}
+  input.mono,textarea{font-family:var(--mono);font-size:12.5px}
+  input:focus,select:focus,textarea:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  input::placeholder{color:var(--mut)}
+  textarea{min-height:150px;resize:vertical;line-height:1.6}
+  .hint{color:var(--mut);font-size:12px;margin:6px 0 0}
+  .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+  .ok-t{color:var(--ok)} .bad-t{color:var(--down)} .dim-t{color:var(--dim)}
+
+  /* skeleton + empty */
+  .sk{height:13px;border-radius:5px;background:linear-gradient(90deg,#1b2029,#232a35,#1b2029);
+    background-size:200% 100%;animation:sh 1.3s linear infinite}
+  @keyframes sh{to{background-position:-200% 0}}
+  .empty{padding:26px 16px;text-align:center;color:var(--mut);font-size:13px}
+  .empty svg{width:22px;height:22px;margin:0 auto 8px;color:#38404e}
+
+  /* auth */
+  .auth{min-height:100vh;display:grid;place-items:center;padding:24px}
+  .auth .box{width:100%;max-width:360px;background:var(--card);border:1px solid var(--line);
+    border-radius:16px;padding:26px;box-shadow:0 20px 50px -20px rgba(0,0,0,.6)}
+  .auth .mark{width:40px;height:40px;border-radius:11px;background:linear-gradient(145deg,#2b3448,#171b24);
+    border:1px solid var(--line);display:grid;place-items:center;color:var(--accent);margin-bottom:16px}
+  .auth h1{margin:0 0 4px;font-size:18px;letter-spacing:-.01em}
+  .auth p{margin:0 0 18px;color:var(--mut);font-size:13px}
+  .auth .btn{width:100%;justify-content:center;margin-top:14px;padding:10px}
+
+  /* toast */
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);opacity:0;
+    background:var(--raise);border:1px solid var(--line);color:var(--fg);padding:10px 16px;border-radius:10px;
+    font-size:13px;box-shadow:0 12px 30px -10px rgba(0,0,0,.6);transition:.22s;pointer-events:none;z-index:50;max-width:92vw}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #toast.bad{border-color:rgba(240,86,79,.5)}
+
+  .codewrap{position:relative}
+  .codewrap .btn{position:absolute;top:10px;right:10px}
+  pre.code{background:#0b0d12;border:1px solid var(--line);border-radius:var(--r-sm);padding:14px 15px;margin:0;
+    font-family:var(--mono);font-size:12.5px;line-height:1.7;color:#cfd6e4;overflow:auto;white-space:pre}
+
+  /* mobile: collapse sidebar to a top bar */
+  @media (max-width:720px){
+    .shell{grid-template-columns:1fr}
+    .side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;gap:4px;padding:10px}
+    .brand{padding:4px 8px 4px 4px} .brand small{display:none}
+    .nav{flex-direction:row;flex-wrap:wrap;margin:0}
+    .nav button{padding:8px 10px} .nav button span{display:none}
+    .side .foot{margin:0 0 0 auto;flex-direction:row;border:0;padding:0}
+    .health{display:none}
+    .content{padding:20px 16px 48px}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast"></div>
+<script>
+const $=(s,r=document)=>r.querySelector(s);
+const ICON={
+  logo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>',
+  dashboard:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2 6 4-14 2 8h6"/></svg>',
+  deploy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>',
+  settings:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12a7 7 0 0 0 .1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6A7 7 0 0 0 19 12Z"/></svg>',
+  monitors:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
+  raw:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7l-5 5 5 5M15 7l5 5-5 5"/></svg>',
+  out:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
+  copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>',
+  bell:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  console:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>',
+};
+const NAV=[["dashboard","Dashboard"],["console","Console"],["deploy","Deploy"],["monitors","Monitors"],["settings","Settings"],["raw","Raw"]];
+
+let TOKEN=localStorage.getItem("sift_token")||"", CFG=null, TAB="dashboard", TIMER=null;
+
+async function req(method,path,body){
+  const h={"Content-Type":"application/json"}; if(TOKEN) h["X-Admin-Token"]=TOKEN;
+  const r=await fetch(path,{method,headers:h,body:body?JSON.stringify(body):undefined});
+  if(r.status===401){TOKEN="";localStorage.removeItem("sift_token");stopTimer();render();throw new Error("auth");}
+  const t=await r.text(); let j={}; try{j=JSON.parse(t)}catch{j={raw:t}}
+  if(!r.ok) throw new Error(j.status||j.error||r.status); return j;
+}
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function toast(msg,bad){const t=$("#toast");t.textContent=msg;t.className=bad?"bad show":"show";clearTimeout(t._h);t._h=setTimeout(()=>t.className="",2600);}
+function ago(iso){if(!iso)return"";const s=(Date.now()-new Date(iso).getTime())/1000;if(s<60)return"just now";if(s<3600)return Math.floor(s/60)+"m ago";if(s<86400)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago";}
+function stopTimer(){if(TIMER){clearInterval(TIMER);TIMER=null;}}
+
+async function render(){
+  stopTimer();
+  let meta; try{meta=await req("GET","/admin/meta");}catch(e){return $("#app").innerHTML=`<div class="auth"><div class="box"><h1>Can't reach Sift</h1><p>${esc(e.message)}</p></div></div>`;}
+  if(!TOKEN) return meta.needs_setup?authScreen("setup"):authScreen("login");
+  try{CFG=await req("GET","/admin/config");}catch(e){return;}
+  shell();
+}
+
+function authScreen(kind){
+  const setup=kind==="setup";
+  $("#app").innerHTML=`<div class="auth"><div class="box">
+    <div class="mark">${ICON.logo}</div>
+    <h1>${setup?"Welcome to Sift":"Sign in"}</h1>
+    <p>${setup?"Set an admin password — it guards your tokens and keys.":"Enter the admin password for this console."}</p>
+    <label class="lbl">Password</label>
+    <input id="pw" type="password" placeholder="${setup?'at least 6 characters':'••••••••'}" autofocus
+      onkeydown="if(event.key==='Enter')document.getElementById('go').click()">
+    <button class="btn primary" id="go">${setup?"Create & continue":"Sign in"}</button>
+    <p id="err" class="hint bad-t" style="min-height:14px;text-align:center"></p>
+  </div></div>`;
+  $("#go").onclick=async()=>{
+    const pw=$("#pw").value;
+    try{const r=await req("POST",setup?"/admin/setup":"/admin/login",{password:pw});
+      TOKEN=r.token;localStorage.setItem("sift_token",TOKEN);render();
+    }catch(e){$("#err").textContent=setup?(e.message||"Couldn't set password"):"Wrong password";}
+  };
+}
+
+function shell(){
+  $("#app").innerHTML=`<div class="shell">
+    <aside class="side">
+      <div class="brand"><div class="mark">${ICON.logo}</div><div><b>Sift</b><small>notification brain</small></div></div>
+      <nav class="nav">${NAV.map(([k,l])=>`<button data-t="${k}" class="${k===TAB?'on':''}">${ICON[k]}<span>${l}</span></button>`).join("")}</nav>
+      <div class="foot">
+        <div class="health" id="health"><span class="dot unk"></span><span>checking…</span></div>
+        <button class="signout" id="out">${ICON.out}<span>Sign out</span></button>
+      </div>
+    </aside>
+    <main class="content" id="view"></main>
+  </div>`;
+  document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>{if(b.dataset.t!==TAB){TAB=b.dataset.t;shell();}});
+  $("#out").onclick=()=>{stopTimer();TOKEN="";localStorage.removeItem("sift_token");render();};
+  ({dashboard:viewDashboard,console:viewConsole,deploy:viewDeploy,settings:viewSettings,monitors:viewMonitors,raw:viewRaw}[TAB])();
+}
+
+function pageTop(h1,p,tools){return `<div class="top"><div><h1>${h1}</h1>${p?`<p>${p}</p>`:""}</div><div class="toolbar">${tools||""}</div></div>`;}
+function skRows(n){let s="";for(let i=0;i<n;i++)s+=`<div class="row"><span class="dot unk"></span><span class="sk" style="width:${90+i*23}px"></span><span class="sk" style="width:60px;margin-left:auto"></span></div>`;return s;}
+
+/* ---------------- Dashboard ---------------- */
+async function viewDashboard(){
+  const v=$("#view");
+  v.innerHTML=pageTop("Dashboard","Your fleet, at a glance.",
+    `<button class="btn ghost sm" id="tTel">${ICON.bell}Test Telegram</button><button class="btn ghost sm" id="tAI">Test AI</button>`)
+    +`<div id="status"></div>
+      <div class="panel"><div class="hd"><h2>Fleet</h2><span class="count" id="fcount"></span></div><div class="bd" id="fleet">${skRows(4)}</div></div>
+      <div class="panel"><div class="hd"><h2>Helper agents</h2><span class="count" id="acount"></span></div><div class="bd" id="agents">${skRows(2)}</div></div>
+      <div class="panel"><div class="hd"><h2>Recent events</h2></div><div class="bd" id="events">${skRows(4)}</div></div>`;
+  $("#tTel").onclick=async(e)=>{e.target.disabled=true;try{const r=await req("POST","/admin/telegram/test");toast(r.ok?"Test alert sent to Telegram":"Telegram failed",!r.ok);}catch(x){toast(x.message,true);}e.target.disabled=false;};
+  $("#tAI").onclick=async(e)=>{e.target.disabled=true;const r=await req("GET","/admin/llm/test");toast((r.ok?"AI reachable — ":"AI: ")+r.detail,!r.ok);e.target.disabled=false;};
+  window._rmAgent=async(host)=>{
+    if(!confirm(`Remove the Sift agent from "${host}"?\n\nIts exec daemon will disable and delete itself. (Needs the daemon running on that host.)`))return;
+    try{await req("POST","/admin/agent/uninstall",{host});toast(`Uninstalling agent on ${host}…`);setTimeout(refreshDash,1600);}catch(e){toast(e.message,true);}
+  };
+  await refreshDash();
+  stopTimer(); TIMER=setInterval(()=>{if(TAB==="dashboard")refreshDash();},15000);
+}
+async function refreshDash(){
+  let fleet=[],agents=[],events=[];
+  try{fleet=await req("GET","/admin/fleet");}catch(e){}
+  try{agents=await req("GET","/admin/agents");}catch(e){}
+  try{events=await req("GET","/admin/events");}catch(e){}
+  const mons=fleet.filter(f=>!f.note);
+  const down=mons.filter(m=>m.status!=="up");
+  const crit=events.filter(e=>e.severity==="critical"||e.severity==="urgent");
+  const silent=agents.filter(a=>a.silent);
+  const ok=!down.length&&!silent.length;
+  const issues=[...down.map(d=>d.server+" down"),...silent.map(s=>s.host+" silent")];
+  $("#status").innerHTML=`<div class="status ${ok?'good':'bad'}"><div class="glyph">${ok?ICON.check:ICON.bell}</div>
+    <div><div class="big">${ok?"All systems operational":issues.length+" issue"+(issues.length>1?"s":"")+" need attention"}</div>
+    <div class="sub">${ok?(mons.length+" targets monitored · "+crit.length+" unresolved alerts in events"):esc(issues.slice(0,3).join(" · "))}</div></div></div>`;
+  const hp=$("#health"); if(hp)hp.innerHTML=`<span class="dot ${ok?'ok live':'down'}"></span><span>${ok?"All operational":issues.length+" issue"+(issues.length>1?"s":"")}</span>`;
+
+  $("#fcount").textContent=mons.length?`${mons.length-down.length}/${mons.length} up`:"";
+  $("#fleet").innerHTML=mons.length?mons.map(m=>`<div class="row"><span class="dot ${m.status==='up'?'ok':'down'}"></span>
+    <span class="name">${esc(m.server)}</span><span class="meta mono">${esc(m.detail||m.status)}</span></div>`).join("")
+    :`<div class="empty">${ICON.monitors}No monitors yet — add servers under <b>Monitors</b>.</div>`;
+
+  $("#acount").textContent=agents.filter(a=>!a.note).length?agents.filter(a=>!a.note).length+" reporting":"";
+  $("#agents").innerHTML=agents.length&&!agents[0].note?agents.map(a=>`<div class="row"><span class="dot ${a.silent?'down':'ok'}"></span>
+    <span class="name">${esc(a.host)}</span><span class="meta mono">${a.silent?'silent':'last seen '+ago(a.last_seen)}</span>
+    <button class="btn ghost sm" style="margin-left:12px" onclick="window._rmAgent('${esc(a.host)}')">Remove</button></div>`).join("")
+    :`<div class="empty">${ICON.deploy}No helpers yet — add one from the <b>Deploy</b> tab.</div>`;
+
+  $("#events").innerHTML=events.length?events.map(e=>`<div class="ev"><span class="pill ${e.severity||'routine'}">${esc(e.severity||'·')}</span>
+    <span class="msg" title="${esc(e.summary||e.title)}"><span class="src">${esc(e.source)}</span> &nbsp;${esc(e.summary||e.title||'')}</span>
+    <span class="ago">${ago(e.ts)}</span></div>`).join("")
+    :`<div class="empty">${ICON.bell}Nothing yet. Events will stream in as your hosts report.</div>`;
+}
+
+/* ---------------- Deploy ---------------- */
+function viewDeploy(){
+  $("#view").innerHTML=pageTop("Deploy an agent","Add a host to Sift: an exec daemon (on-demand read-only diagnostics) and/or a metrics collector (health + error logs).")+
+  `<div class="panel pad">
+    <label class="lbl">Host label</label><input id="d_name" placeholder="my-server" oninput="window._gen()">
+    <label class="lbl">Sift server URL the agent reports to</label><input id="d_server" class="mono" oninput="window._gen()">
+    <p class="hint">On the LAN use this server's address, e.g. <span class="mono">http://sift.lan:8130</span>. For a remote host (a VPS) use your public URL, e.g. <span class="mono">https://sift.example.com</span>.</p>
+    <label class="lbl" style="margin-top:16px">Components</label>
+    <select id="d_comp" onchange="window._gen()">
+      <option value="both">Exec daemon + metrics collector</option>
+      <option value="daemon">Exec daemon only</option>
+      <option value="collector">Metrics collector only</option>
+    </select>
+    <label class="lbl" style="margin-top:16px">Run on that host (needs root)</label>
+    <div class="codewrap"><pre class="code" id="d_out"></pre><button class="btn ghost sm" id="d_copy">${ICON.copy}Copy</button></div>
+    <p class="hint">Downloads the agent from this server, writes <span class="mono">/opt/sift-agent/agent.env</span>, and installs a systemd service and/or cron. You can remove it any time from the Dashboard → <b>Remove</b>.</p>
+  </div>`;
+  $("#d_server").value=location.origin;
+  window._gen=()=>{
+    const n=(($("#d_name").value||"my-server").replace(/[^A-Za-z0-9_.-]/g,"-"));
+    const s=$("#d_server").value.replace(/\/+$/,""); const tok=CFG.ingest_token||"SET_INGEST_TOKEN"; const c=$("#d_comp").value;
+    $("#d_out").textContent=`curl -fsSL ${s}/agent/install.sh | sudo SIFT_SERVER=${s} SIFT_TOKEN=${tok} SIFT_HOST=${n} SIFT_COMPONENTS=${c} bash`;
+  };
+  $("#d_copy").onclick=()=>{const el=$("#d_out");const r=document.createRange();r.selectNodeContents(el);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);
+    let done=false;try{navigator.clipboard.writeText(el.textContent);done=true;}catch(e){}try{if(!done)done=document.execCommand("copy");}catch(e){}
+    toast(done?"Copied to clipboard":"Select the text and press ⌘/Ctrl-C",!done);};
+  window._gen();
+}
+
+/* ---------------- Settings ---------------- */
+function fld(label,val,id,{mono,type,ph}={}){return `<label class="lbl">${label}</label><input id="${id}" class="${mono?'mono':''}" type="${type||'text'}" placeholder="${ph||''}" value="${esc(val)}">`;}
+function viewSettings(){
+  const tg=CFG.telegram||{},llm=CFG.llm||{},dl=CFG.delivery||{channel:"telegram"};
+  $("#view").innerHTML=pageTop("Settings","Delivery, AI, and ingest. Saving restarts Sift.",
+    `<button class="btn primary" id="save">${ICON.check}Save &amp; restart</button>`)+
+  `<div class="panel">
+    <div class="grp"><label class="lbl">Delivery channel</label>
+      <select id="f_channel">${["telegram","ntfy","discord","slack","webhook"].map(c=>`<option ${c===dl.channel?'selected':''}>${c}</option>`).join("")}</select>
+      ${fld("Telegram bot token",("bot_token"in tg)?tg.bot_token:"","f_tgtok",{mono:1,ph:"123456:ABC…"})}
+      ${fld("Telegram chat id",tg.chat_id,"f_tgchat",{mono:1})}
+      <div class="inline"><button class="btn ghost sm" id="fetchid">${ICON.plus}Fetch chat id from bot</button><span id="idres" class="hint" style="margin:0"></span></div>
+    </div>
+    <div class="grp"><label class="lbl">AI endpoint (optional — blank = rules only)</label>
+      ${fld("LLM URL (OpenAI-compatible)",llm.url,"f_llmurl",{mono:1,ph:"http://localhost:11434/v1/chat/completions"})}
+      ${fld("Model",llm.model,"f_llmmodel",{mono:1})}
+      ${fld("API key (blank for local)",llm.api_key,"f_llmkey",{mono:1})}
+    </div>
+    <div class="grp"><label class="lbl">What the AI should know about your setup</label>
+      <textarea id="f_ctx" style="min-height:130px" placeholder="Your hosts and what each does; what matters most (pool health, backups, a site actually down); what's usually just noise (scanners being blocked, update chatter)…">${esc(CFG.ai_context||"")}</textarea>
+      <p class="hint">Plain English. Sift uses this everywhere — triage, chat and the daily digest. The more it knows, the smarter and quieter it gets.</p>
+      <label class="lbl" style="margin-top:16px">Mute patterns — one regex per line. Matches never alert; they go straight to the digest.</label>
+      <textarea id="f_mute" class="mono" style="min-height:88px" placeholder="crowdsec.*(ban|decision)&#10;watchtower.*no new images&#10;Failed password.*from">${esc((CFG.mute_patterns||[]).join("\n"))}</textarea>
+      <p class="hint">Deterministic — your own “never ping me about this” list, applied before the AI even looks.</p>
+    </div>
+    <div class="grp">
+      ${fld("Ingest token (shared secret for agents/publishers)",CFG.ingest_token,"f_ingest",{mono:1})}
+      ${fld("Daily digest hour (0–23, local)",CFG.digest_hour_local,"f_digest",{type:"number"})}
+    </div>
+  </div>`;
+  $("#fetchid").onclick=async()=>{$("#idres").innerHTML='<span class="dim-t">checking…</span>';const r=await req("GET","/admin/telegram/chatid");
+    $("#idres").innerHTML=r.error?`<span class="bad-t">${esc(r.error)}</span>`:(r.chats&&r.chats.length?r.chats.map(c=>`<button class="btn ghost sm" onclick="document.getElementById('f_tgchat').value='${c.id}';window.toast&&toast('Set chat id ${c.id}')">${esc(String(c.name))}: ${c.id}</button>`).join(" "):`<span class="dim-t">${esc(r.hint||'no chats')}</span>`);};
+  $("#save").onclick=()=>{
+    CFG.delivery={...dl,channel:$("#f_channel").value};
+    CFG.telegram={...tg,bot_token:$("#f_tgtok").value,chat_id:$("#f_tgchat").value,authorized_chat_ids:[$("#f_tgchat").value]};
+    const u=$("#f_llmurl").value.trim();
+    CFG.llm=u?{...llm,url:u,model:$("#f_llmmodel").value,api_key:$("#f_llmkey").value}:null;
+    CFG.ingest_token=$("#f_ingest").value; CFG.digest_hour_local=+$("#f_digest").value;
+    CFG.ai_context=$("#f_ctx").value.trim();
+    CFG.mute_patterns=$("#f_mute").value.split("\n").map(s=>s.trim()).filter(Boolean);
+    saveConfig();
+  };
+}
+window.toast=toast;
+
+/* ---------------- Monitors ---------------- */
+function viewMonitors(){
+  const mons=CFG.monitors||[];
+  $("#view").innerHTML=pageTop("Monitors","Servers and services Sift checks from here.",
+    `<button class="btn primary" id="save">${ICON.check}Save &amp; restart</button>`)+
+  `<div class="panel"><div class="bd" id="mlist"></div></div>
+   <div class="panel pad"><label class="lbl">Add a target</label>
+     <div class="inline"><input id="m_name" placeholder="name" style="flex:2;min-width:120px">
+       <select id="m_type" style="width:auto"><option>http</option><option>tcp</option></select>
+       <input id="m_tgt" class="mono" placeholder="https://… or host:port" style="flex:3;min-width:160px">
+       <button class="btn ghost" id="add">${ICON.plus}Add</button></div></div>`;
+  const draw=()=>{$("#mlist").innerHTML=mons.length?mons.map((m,i)=>`<div class="row">
+     <span class="dot unk"></span><span class="name">${esc(m.name)}</span>
+     <span class="meta mono">${esc(m.type)} · ${esc(m.url||((m.host||'')+':'+(m.port||'')))}</span>
+     <button class="btn ghost sm" style="margin-left:14px" onclick="window._rm(${i})">Remove</button></div>`).join("")
+     :`<div class="empty">${ICON.monitors}No targets yet.</div>`;};
+  window._rm=(i)=>{mons.splice(i,1);draw();};
+  $("#add").onclick=()=>{const t=$("#m_tgt").value.trim();if(!t)return;const m={name:$("#m_name").value||t,type:$("#m_type").value};
+    if(m.type==="http")m.url=t;else{const[h,p]=t.split(":");m.host=h;m.port=+p||22;}mons.push(m);draw();$("#m_name").value="";$("#m_tgt").value="";};
+  $("#save").onclick=()=>{CFG.monitors=mons;saveConfig();};
+  draw();
+}
+
+/* ---------------- Console (read-only exec) ---------------- */
+async function viewConsole(){
+  const v=$("#view");
+  v.innerHTML=pageTop("Console","Run a read-only diagnostic on any host's agent. Every command is allowlisted — nothing here can change, restart or delete anything.")
+   +`<div class="panel pad">
+       <div class="inline" style="margin-top:0;align-items:flex-end">
+         <div style="flex:1;min-width:150px"><label class="lbl" style="margin-top:0">Host</label><select id="c_host"></select></div>
+         <div style="flex:1.4;min-width:170px"><label class="lbl" style="margin-top:0">Command</label><select id="c_cmd"></select></div>
+       </div>
+       <div id="c_args" class="inline"></div>
+       <div class="inline"><button class="btn primary" id="c_run">${ICON.console}Run</button><span id="c_hint" class="hint" style="margin:0"></span></div>
+     </div>
+     <div class="panel" id="c_resultpanel" style="display:none"><div class="hd"><h2>Output</h2><span class="count mono" id="c_status"></span></div>
+       <div class="bd pad" style="padding-top:0"><pre class="code" id="c_output" style="margin-top:14px;max-height:380px"></pre></div></div>
+     <div class="panel"><div class="hd"><h2>Recent commands</h2></div><div class="bd" id="c_hist">${skRows(3)}</div></div>`;
+  let spec={commands:[],hosts:[]};
+  try{spec=await req("GET","/admin/exec/spec");}catch(e){}
+  const hs=$("#c_host"), cs=$("#c_cmd");
+  hs.innerHTML=spec.hosts&&spec.hosts.length?spec.hosts.map(h=>`<option>${esc(h)}</option>`).join(""):`<option value="">(no agents reporting yet)</option>`;
+  cs.innerHTML=(spec.commands||[]).map(c=>`<option value="${esc(c.key)}">${esc(c.key)} — ${esc(c.desc)}</option>`).join("");
+  const drawArgs=()=>{
+    const c=(spec.commands||[]).find(x=>x.key===cs.value)||{args:{}};
+    const keys=Object.keys(c.args||{});
+    $("#c_args").innerHTML=keys.length?keys.map(k=>{
+      const isInt=String(c.args[k]).startsWith("int");
+      return `<div style="flex:1;min-width:120px"><label class="lbl" style="margin-top:0">${esc(k)}</label>
+        <input id="c_arg_${esc(k)}" class="mono" type="${isInt?'number':'text'}" placeholder="${isInt?'50':esc(k)}"></div>`;
+    }).join(""):`<p class="hint" style="margin:4px 0 0">No arguments.</p>`;
+  };
+  cs.onchange=drawArgs; drawArgs();
+  const loadHist=async()=>{
+    let h=[]; try{h=await req("GET","/admin/commands");}catch(e){}
+    $("#c_hist").innerHTML=h.length?h.map(r=>`<div class="row"><span class="dot ${r.status==='done'?'ok':(r.status==='error'?'down':'unk')}"></span>
+      <span class="name mono">${esc(r.host)} · ${esc(r.cmd)}</span>
+      <span class="meta mono">${esc(r.status)}${r.exit_code!=null?' · rc '+r.exit_code:''} · ${esc(r.requested_by||'')} · ${ago(r.created_at)}</span></div>`).join("")
+      :`<div class="empty">${ICON.console}No commands run yet.</div>`;
+  };
+  $("#c_run").onclick=async()=>{
+    const host=hs.value, cmd=cs.value;
+    if(!host){toast("No agent to run on — deploy one first",true);return;}
+    const c=(spec.commands||[]).find(x=>x.key===cmd)||{args:{}};
+    const args={}; Object.keys(c.args||{}).forEach(k=>{const el=$("#c_arg_"+k); if(el&&el.value!=="")args[k]=el.value;});
+    const btn=$("#c_run"); btn.disabled=true; $("#c_hint").textContent="running…";
+    $("#c_resultpanel").style.display=""; $("#c_status").textContent=""; $("#c_output").textContent="…";
+    try{
+      const q=await req("POST","/admin/exec",{host,cmd,args}); const id=q.id; const t0=Date.now();
+      let got=false;
+      while(Date.now()-t0<32000){
+        await new Promise(r=>setTimeout(r,700));
+        const row=await req("GET","/admin/exec/"+id);
+        if(row.status==="done"||row.status==="error"){
+          $("#c_status").innerHTML=`<span class="${row.status==='done'?'ok-t':'bad-t'}">${esc(row.status)} · rc ${row.exit_code}</span>`;
+          $("#c_output").textContent=row.output||"(no output)"; got=true; break;
+        }
+      }
+      if(!got){$("#c_status").innerHTML='<span class="bad-t">timeout</span>';
+        $("#c_output").textContent="No result — is the exec daemon (sift-agentd) running on "+host+"?";}
+      loadHist();
+    }catch(e){$("#c_status").innerHTML=`<span class="bad-t">${esc(e.message)}</span>`;$("#c_output").textContent="";}
+    btn.disabled=false; $("#c_hint").textContent="";
+  };
+  loadHist();
+}
+
+/* ---------------- Raw ---------------- */
+function viewRaw(){
+  $("#view").innerHTML=pageTop("Raw config","Full configuration JSON. Edit with care.",
+    `<button class="btn primary" id="save">${ICON.check}Save &amp; restart</button>`)+
+  `<div class="panel pad"><textarea id="raw" class="mono" style="min-height:420px">${esc(JSON.stringify(CFG,null,2))}</textarea></div>`;
+  $("#save").onclick=()=>{try{CFG=JSON.parse($("#raw").value);}catch(e){toast("Invalid JSON — not saved",true);return;}saveConfig();};
+}
+
+async function saveConfig(){
+  toast("Saving & restarting…");
+  try{await req("POST","/admin/config",{config:CFG});
+    toast("Saved — reconnecting…");setTimeout(()=>location.reload(),3200);
+  }catch(e){toast(e.message,true);}
+}
+
+render();
+</script>
+</body>
+</html>

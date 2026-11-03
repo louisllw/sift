@@ -1,0 +1,57 @@
+{
+  "_about": "Sift config. Copy to config.json (or /data/config.json in Docker) and edit. The LLM is OPTIONAL — remove the 'llm' block to run in rules-only mode.",
+
+  "listen_port": 8130,
+  "db_path": "sift.db",
+
+  "llm": {
+    "_note": "OPTIONAL. Any OpenAI-compatible /chat/completions endpoint: Ollama, vLLM, LM Studio, OpenAI, Groq, etc. Delete this whole block to disable AI (rules-only mode still works).",
+    "url": "http://localhost:11434/v1/chat/completions",
+    "model": "llama3.1",
+    "api_key": "",
+    "timeout": 45
+  },
+
+  "delivery": {
+    "_note": "Where alerts go. channel = telegram | ntfy | discord | slack | webhook.",
+    "channel": "telegram"
+  },
+
+  "telegram": {
+    "_note": "Create a bot via @BotFather for the token; the web UI can fetch your chat_id automatically once you message the bot. Only authorized_chat_ids may use the interactive chat.",
+    "bot_token": "PUT_BOTFATHER_TOKEN_HERE",
+    "chat_id": "PUT_YOUR_CHAT_ID_HERE",
+    "authorized_chat_ids": ["PUT_YOUR_CHAT_ID_HERE"]
+  },
+
+  "ingest_token": "CHANGE_ME_to_a_long_random_string",
+
+  "admin_session_days": 30,
+
+  "triage_interval_seconds": 20,
+  "triage_batch_max": 20,
+  "digest_hour_local": 8,
+  "digest_lookback_hours": 24,
+
+  "monitor_interval_seconds": 90,
+  "monitors": [
+    {"name": "Example web service", "type": "http", "url": "https://example.com/"},
+    {"name": "Example host SSH", "type": "tcp", "host": "192.168.1.10", "port": 22}
+  ],
+
+  "_comment_critical_bypass": "Regexes matched against title+body. A hit pushes IMMEDIATELY without the LLM — the deterministic safety rail for things that must never be missed or delayed.",
+  "critical_bypass": [
+    "(?i)\\bDEGRADED\\b",
+    "(?i)\\bFAULTED\\b",
+    "(?i)(zfs|zpool|raid|smart).*(fail|error)",
+    "(?i)backup.*(fail|error|missed)",
+    "(?i)disk.*(full|100%)",
+    "(?i)\\bno space left\\b"
+  ],
+
+  "_comment_ai_context": "Plain-English description of YOUR setup (hosts, what matters most, what's usually just noise). Injected into triage, chat and the digest so the AI judges what matters here. The single biggest 'make it smart' lever — also editable from the web UI. Leave empty to skip.",
+  "ai_context": "",
+
+  "_comment_mute_patterns": "Case-insensitive regexes matched against title+body. A hit is filed straight to the digest, never alerted — your deterministic 'never ping me about this' list.",
+  "mute_patterns": []
+}

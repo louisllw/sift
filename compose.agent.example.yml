@@ -1,0 +1,23 @@
+# Run the Sift helper as a container on any Docker host.
+#   1) set SIFT_SERVER + SIFT_TOKEN + SIFT_HOST below
+#   2) docker compose -f compose.agent.example.yml up -d --build
+services:
+  sift-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: sift-agent
+    restart: unless-stopped
+    environment:
+      SIFT_SERVER: "http://SIFT_HOST_OR_IP:8130"   # LAN IP, or https://sift.example.com for a remote host
+      SIFT_TOKEN: "YOUR_INGEST_TOKEN"
+      SIFT_HOST: "this-hostname"                    # label shown in Sift
+      SIFT_INTERVAL: "300"                          # seconds between runs
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # read container health + logs
+      - /:/host:ro                                     # host disk usage (read-only)
+    # Notes:
+    # - ZFS pool health + SMART need host tools and device access — for those, run the
+    #   agent host-level (cron) instead; see agents/sift-agent.sh.
+    # - If the agent runs on the SAME host/network as the Sift server, you can use the
+    #   server's container name, e.g. SIFT_SERVER: http://sift:8130 (attach to its network).
