@@ -61,15 +61,37 @@ post_result() {   # id  output  rc   — id/rc in headers, raw output as the bod
          --data-binary "${2:0:$OUT_MAX}" "$SERVER/agent/command-result" >/dev/null 2>&1
 }
 
+# Failure backoff: a refused, broken or unauthorised server must not be hammered, because a
+# reverse proxy's WAF will read rapid-fire errors as an attack and ban this host.
+BACKOFF_MAX="${SIFT_BACKOFF_MAX:-300}"
+MIN_CYCLE=2          # a long-poll that returns faster than this is not really long-polling
+delay=0
+backoff() {          # $1 = reason. Doubles 5s -> BACKOFF_MAX, logging once per failure.
+    if [ "$delay" -eq 0 ]; then delay=5; else delay=$((delay * 2)); fi
+    [ "$delay" -gt "$BACKOFF_MAX" ] && delay="$BACKOFF_MAX"
+    echo "[sift-agentd] $1; retrying in ${delay}s" >&2
+    sleep "$delay"
+}
+
 echo "[sift-agentd] $HOST polling $SERVER (read-only exec daemon)" >&2
 while true; do
+    started=$SECONDS
     # heartbeat so the server/UI knows this host + its exec daemon are alive
     curl -s -m 10 "${AUTH[@]}" -X POST --data "{\"host\":\"$HOST\"}" "$SERVER/agent/heartbeat" >/dev/null 2>&1
     # long-poll (server holds up to 25s); -m 35 leaves headroom. text fmt = tab-separated lines.
-    resp="$(curl -s -m 35 "${AUTH[@]}" "$SERVER/agent/commands?host=$HOST&fmt=text" 2>/dev/null)" || { sleep 5; continue; }
-    [ -z "$resp" ] && continue
+    # -w appends the status on its own line: curl exits 0 on a 401/403/404/5xx, so test it explicitly.
+    resp="$(curl -s -m 35 -w '\n%{http_code}' "${AUTH[@]}" "$SERVER/agent/commands?host=$HOST&fmt=text" 2>/dev/null)" || { backoff "server unreachable"; continue; }
+    code="${resp##*$'\n'}"
+    resp="${resp%$'\n'*}"
+    case "$code" in
+        2*) ;;
+        *)  backoff "server returned HTTP $code"; continue ;;   # never parse an error body as commands
+    esac
+    if [ "$delay" -ne 0 ]; then echo "[sift-agentd] server reachable again" >&2; delay=0; fi
+    ran=0
     while IFS=$'\t' read -r id cmd argstr; do
-        [ -z "$id" ] && continue
+        [[ "$id" =~ ^[0-9]+$ ]] || continue   # real commands have a numeric id; skips blanks and stray HTML from a proxy
+        ran=1
         container=""; unit=""; disk=""; lines=""; action=""
         for kv in $argstr; do
             case "${kv%%=*}" in
@@ -115,4 +137,6 @@ TEARDOWN
 (timed out after ${TIMEOUT}s)"
         post_result "$id" "$out" "$rc"
     done <<< "$resp"
+    # nothing to do and the server answered instantly: pause so a 200 can't become a tight loop either
+    [ "$ran" -eq 0 ] && [ $((SECONDS - started)) -lt "$MIN_CYCLE" ] && sleep "$MIN_CYCLE"
 done

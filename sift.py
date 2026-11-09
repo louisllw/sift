@@ -14,7 +14,7 @@ Design rules:
 
 Stdlib only. Run:  python3 sift.py [config.json]
 """
-import base64, hashlib, hmac, json, os, re, secrets, socket, sqlite3, sys, threading, time, urllib.request, urllib.error, urllib.parse
+import base64, glob, hashlib, hmac, html, json, os, re, secrets, shutil, socket, sqlite3, sys, threading, time, urllib.request, urllib.error, urllib.parse
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -85,6 +85,10 @@ def init_db():
             status TEXT DEFAULT 'queued',    -- queued|sent|done|error
             output TEXT, exit_code INTEGER, requested_by TEXT,
             created_at TEXT, completed_at TEXT)""")
+        # every Telegram chat exchange, so "the bot said something dumb" can actually be debugged
+        c.execute("""CREATE TABLE IF NOT EXISTS chat_log(
+            id INTEGER PRIMARY KEY, ts TEXT, chat_id TEXT,
+            user_text TEXT, replied_to TEXT, tools TEXT, reply TEXT, error TEXT)""")
 
 
 def add_event(ev):
@@ -115,14 +119,30 @@ def telegram(text):
     if "PUT_" in tok or "PUT_" in str(chat):
         print(f"[telegram NOT CONFIGURED] would send:\n{text}\n", flush=True)
         return False
-    data = json.dumps({"chat_id": chat, "text": text,
-                       "parse_mode": "HTML", "disable_web_page_preview": True}).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{tok}/sendMessage", data,
-        {"Content-Type": "application/json"})
-    try:
+    def _send(payload):
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{tok}/sendMessage", json.dumps(payload).encode(),
+            {"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=15).read()
+
+    try:
+        _send({"chat_id": chat, "text": text,
+               "parse_mode": "HTML", "disable_web_page_preview": True})
         return True
+    except urllib.error.HTTPError as e:
+        # 400 = Telegram couldn't parse the HTML (e.g. a stray "<urlopen error ...>").
+        # Never drop an alert over formatting: resend it as plain text.
+        if e.code != 400:
+            print(f"[telegram ERROR] {e}", flush=True)
+            return False
+        print(f"[telegram] HTML rejected, resending as plain text: {e}", flush=True)
+        try:
+            _send({"chat_id": chat, "text": html.unescape(re.sub(r"</?(b|i|code|pre)>", "", text)),
+                   "disable_web_page_preview": True})
+            return True
+        except Exception as e2:
+            print(f"[telegram ERROR] plain-text retry failed: {e2}", flush=True)
+            return False
     except Exception as e:
         print(f"[telegram ERROR] {e}", flush=True)
         return False
@@ -164,7 +184,7 @@ ICON = {"critical": "🔴", "urgent": "⚠️", "routine": "·", "noise": "·"}
 def push_event(row, severity, summary):
     line = summary or row["title"] or row["body"][:200]
     src = row["source"]
-    deliver(f"{ICON.get(severity,'⚠️')} <b>{severity.upper()}</b> · {src}\n{line}")
+    deliver(f"{ICON.get(severity,'⚠️')} <b>{severity.upper()}</b> · {html.escape(src)}\n{html.escape(line)}")
     mark([row["id"]], status="sent", severity=severity, summary=summary,
          sent_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
@@ -308,7 +328,7 @@ def digest_worker():
                         plain = llm_chat(dsys, json.dumps(items), expect_json=False).strip()
                     except Exception:
                         pass
-                deliver("📋 <b>Daily digest</b>\n" + plain)
+                deliver("📋 <b>Daily digest</b>\n" + html.escape(plain, quote=False))
             else:
                 deliver("📋 <b>Daily digest</b>\nQuiet day — nothing needed you.")
             sent_for = now.date()
@@ -348,9 +368,12 @@ def _emit_monitor(name, ok, detail):
     with db() as c:
         row = c.execute("SELECT * FROM events WHERE id=?", (eid,)).fetchone()
     if ok:
-        deliver(f"✅ <b>RECOVERED</b> · {name}\nBack up ({detail}).")
+        deliver(f"✅ <b>RECOVERED</b> · {html.escape(name)}\nBack up ({html.escape(detail)}).")
         mark([eid], status="sent", severity="routine", summary=f"{name} recovered ({detail})",
              sent_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        with _db_lock, db() as c:    # retire the matching DOWN alert so it stops being surfaced
+            c.execute("UPDATE events SET status='digested', severity='routine' WHERE "
+                      "severity IN('critical','urgent') AND status='sent' AND title=?", (f"{name} is DOWN",))
     else:
         push_event(row, "urgent", f"{name} is DOWN — {detail}")   # down is urgent, deterministic
 
@@ -374,6 +397,15 @@ def monitor_worker():
                     _emit_monitor(name, ok, detail)
                 except Exception as e:
                     print(f"[monitor] emit error: {e}", flush=True)
+            elif prev is None and ok:
+                # up on the first check after a restart: a DOWN alert from before the restart never
+                # got its recovery, so close it quietly instead of leaving it "open" forever
+                with _db_lock, db() as c:
+                    n = c.execute("UPDATE events SET status='digested', severity='routine' WHERE "
+                                  "severity IN('critical','urgent') AND status='sent' AND title=?",
+                                  (f"{name} is DOWN",)).rowcount
+                if n:
+                    print(f"[monitor] {name} is up at startup — closed {n} stale DOWN alert(s)", flush=True)
         time.sleep(iv)
 
 
@@ -396,7 +428,11 @@ def agent_heartbeat(host):
         c.execute("INSERT INTO agents(host,last_seen,alerted_silent) VALUES(?,?,0) "
                   "ON CONFLICT(host) DO UPDATE SET last_seen=excluded.last_seen, alerted_silent=0", (host, now))
     if prev and prev["alerted_silent"]:
-        deliver(f"✅ <b>RECOVERED</b> · agent {host}\nHeartbeat is back.")
+        deliver(f"✅ <b>RECOVERED</b> · agent {html.escape(host)}\nHeartbeat is back.")
+        with _db_lock, db() as c:    # retire the "agent went silent / host down" alerts for this host
+            c.execute("UPDATE events SET status='digested', severity='routine' WHERE "
+                      "severity IN('critical','urgent') AND status='sent' AND source='agent' "
+                      "AND (title LIKE ? OR body LIKE ?)", (f"%{host}%", f"%{host}%"))
 
 
 def agent_watch():
@@ -444,6 +480,9 @@ def tool_recent(a):
     p = []
     if a.get("severity"):
         q += " AND severity=?"; p.append(a["severity"])
+    elif not a.get("include_noise"):
+        # chatty log sources can bury everything else under 'noise' — skip it unless asked
+        q += " AND coalesce(severity,'') != 'noise'"
     if a.get("source"):
         q += " AND source LIKE ?"; p.append(f"%{a['source']}%")
     q += " ORDER BY id DESC LIMIT ?"; p.append(min(int(a.get("limit", 10)), 30))
@@ -633,9 +672,10 @@ TOOLS_SPEC = [
         "name": "status", "description": "Overall homelab health in the last 24h: event counts by severity plus any recent critical/urgent items.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
-        "name": "recent", "description": "Recent events, newest first. Optionally filter.",
+        "name": "recent", "description": "Recent events, newest first (noise is left out unless include_noise or severity=noise). Optionally filter.",
         "parameters": {"type": "object", "properties": {
             "severity": {"type": "string", "enum": ["critical", "urgent", "routine", "noise"]},
+            "include_noise": {"type": "boolean", "description": "also return events triaged as noise"},
             "source": {"type": "string", "description": "source/app name substring"},
             "limit": {"type": "integer"}}}}},
     {"type": "function", "function": {
@@ -716,23 +756,70 @@ def _rules_chat(text):
            "(No-LLM mode) Try: 'are my servers up?', 'any updates?', 'how's everything?'."
 
 
-def answer_query(text, chat_id="cli"):
+def _now_line():
+    now = datetime.now(timezone.utc)
+    try:
+        from zoneinfo import ZoneInfo
+        local = now.astimezone(ZoneInfo(CFG.get("timezone") or "Europe/London"))
+        return f"{local:%A %d %B %Y, %H:%M} {local.tzname()} (UTC {now:%H:%M}). Event timestamps are UTC."
+    except Exception:
+        return f"{now:%A %d %B %Y, %H:%M} UTC. Event timestamps are UTC."
+
+
+def _pushed_alerts(n=8):
+    """What Sift itself recently sent to the operator's phone — so 'what was that about?' has an answer."""
+    rows = _rows("SELECT sent_at,source,severity,status,coalesce(summary,title) AS msg FROM events "
+                 "WHERE sent_at IS NOT NULL ORDER BY sent_at DESC LIMIT ?", (n,))
+    if not rows:
+        return ""
+    lines = [f"- {r['sent_at']} [{r['severity']}] {r['source']}: {r['msg']}"
+             + (" (since resolved)" if r["status"] == "digested" else "") for r in rows]
+    return "\n".join(lines)
+
+
+def log_chat(chat_id, user_text, replied_to, tools, reply, error=None):
+    try:
+        with _db_lock, db() as c:
+            c.execute("INSERT INTO chat_log(ts,chat_id,user_text,replied_to,tools,reply,error) "
+                      "VALUES(?,?,?,?,?,?,?)",
+                      (datetime.now(timezone.utc).isoformat(timespec="seconds"), str(chat_id),
+                       user_text, replied_to, json.dumps(tools)[:20000], reply, error))
+            c.execute("DELETE FROM chat_log WHERE ts < ?",     # keep 90 days
+                      ((datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),))
+    except Exception as e:
+        print(f"[chat] log error: {e}", flush=True)
+
+
+def answer_query(text, chat_id="cli", replied_to=None):
     """Conversational agent with short-term memory; calls read-only tools itself."""
+    tools_used = []
     if not LLM_ENABLED:
         reply = _rules_chat(text)
         _remember(chat_id, text, reply)
+        log_chat(chat_id, text, replied_to, tools_used, reply)
         return reply
-    sysmsg = PERSONA + ("\n\nABOUT THIS HOMELAB:\n" + AI_CONTEXT if AI_CONTEXT else "")
+    sysmsg = PERSONA + "\n\nCURRENT TIME: " + _now_line()
+    if AI_CONTEXT:
+        sysmsg += "\n\nABOUT THIS HOMELAB:\n" + AI_CONTEXT
+    pushed = _pushed_alerts()
+    if pushed:
+        sysmsg += ("\n\nALERTS YOU RECENTLY SENT TO THE OPERATOR'S PHONE (newest first) — if they "
+                   "ask about 'that alert' / 'what was that', it's probably one of these:\n" + pushed)
+    user_msg = text
+    if replied_to:
+        user_msg = f"[Replying to this earlier message in the chat:]\n{replied_to}\n\n[Their message:]\n{text}"
     msgs = [{"role": "system", "content": sysmsg}] + _history(chat_id) + \
-           [{"role": "user", "content": text}]
+           [{"role": "user", "content": user_msg}]
     reply = "That spiralled a bit — ask me something more specific?"
-    for _ in range(4):
+    for _ in range(5):
         try:
             m = _llm_turn(msgs)
         except Exception as e:
             print(f"[chat] LLM unreachable: {e}", flush=True)
-            return ("Can't reach my brain (the LLM) right now, so I can't look that "
-                    "up — your alerts still work in the meantime.")
+            reply = ("Can't reach my brain (the LLM) right now, so I can't look that "
+                     "up — your alerts still work in the meantime.")
+            log_chat(chat_id, text, replied_to, tools_used, reply, error=str(e))
+            return reply
         calls = m.get("tool_calls")
         if not calls:
             reply = (m.get("content") or "").strip() or \
@@ -745,10 +832,16 @@ def answer_query(text, chat_id="cli"):
                 args = json.loads(fn.get("arguments") or "{}")
             except Exception:
                 args = {}
-            result = TOOLS[fn["name"]](args) if fn.get("name") in TOOLS else {"error": "unknown tool"}
+            try:
+                result = TOOLS[fn["name"]](args) if fn.get("name") in TOOLS else {"error": "unknown tool"}
+            except Exception as e:
+                result = {"error": f"tool failed: {e}"}
+            content = json.dumps(result)
+            tools_used.append({"tool": fn.get("name"), "args": args, "result": content[:1500]})
             msgs.append({"role": "tool", "tool_call_id": tc.get("id", ""),
-                         "name": fn.get("name"), "content": json.dumps(result)[:4000]})
+                         "name": fn.get("name"), "content": content[:6000]})
     _remember(chat_id, text, reply)
+    log_chat(chat_id, text, replied_to, tools_used, reply)
     return reply
 
 
@@ -790,10 +883,13 @@ def telegram_listener():
                 continue
             if not text:
                 continue
+            rt = msg.get("reply_to_message") or {}
+            replied_to = (rt.get("text") or rt.get("caption") or "").strip() or None
             try:
-                reply = answer_query(text, chat_id=sender)
-                tg_api("sendMessage", {"chat_id": msg["chat"]["id"], "text": reply,
-                                       "parse_mode": "HTML", "disable_web_page_preview": True})
+                reply = answer_query(text, chat_id=sender, replied_to=replied_to)
+                # plain text: an LLM reply containing "<" would make Telegram's HTML parser reject it
+                tg_api("sendMessage", {"chat_id": msg["chat"]["id"], "text": reply[:4000],
+                                       "disable_web_page_preview": True})
             except Exception as e:
                 print(f"[chat] handle error: {e}", flush=True)
 
@@ -804,8 +900,44 @@ def is_critical(title, body):
     return any(p.search(blob) for p in BYPASS)
 
 
+# When a recovery/"OK" event arrives, retire the earlier open alert on the same topic, so the
+# assistant stops surfacing already-fixed problems (e.g. "backup completed" retires "backup stale").
+RECOVERY_RE = re.compile(r"(?i)\b(recovered|resolved|restored|back (?:up|online)|completed successfully|"
+                         r"succeeded|is (?:healthy|back|ok)|no longer|cleared|came back)\b")
+TOPIC_RE = re.compile(r"(?i)\b(backup|restic|snapshot|mail|smtp|imap|stalwart|zfs|zpool|pool|scrub|resilver|"
+                      r"drive|disk|smart|cert|certificate|container|docker|agent|tunnel|proxy|vpn)\b")
+
+
+def _topics(text):
+    return {m.group(0).lower() for m in TOPIC_RE.finditer(text or "")}
+
+
+def retire_matching_alerts(ev):
+    """If ev looks like a recovery, retire recent open (critical/urgent, still 'sent') alerts that
+    share a topic with it — downgraded to routine/digested so they drop out of the urgent view."""
+    blob = f"{ev.get('title','')} {ev.get('body','')}"
+    if not RECOVERY_RE.search(blob):
+        return 0
+    topics = _topics(blob)
+    if not topics:
+        return 0
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    with _db_lock, db() as c:
+        rows = c.execute("SELECT id,title,summary,body FROM events WHERE severity IN('critical','urgent') "
+                         "AND status='sent' AND ts>=?", (since,)).fetchall()
+        hit = [r["id"] for r in rows
+               if _topics(f"{r['title']} {r['summary'] or ''} {r['body']}") & topics]
+        if hit:
+            c.execute(f"UPDATE events SET status='digested', severity='routine' "
+                      f"WHERE id IN ({','.join('?'*len(hit))})", hit)
+    if hit:
+        print(f"[retire] recovery '{ev.get('title','')[:40]}' retired {len(hit)} open alert(s)", flush=True)
+    return len(hit)
+
+
 def handle_event(ev):
     eid = add_event(ev)
+    retire_matching_alerts(ev)        # a recovery event auto-closes the matching open alert
     with db() as c:
         row = c.execute("SELECT * FROM events WHERE id=?", (eid,)).fetchone()
     if is_critical(ev.get("title", ""), ev.get("body", "")):
@@ -848,7 +980,22 @@ def _session_valid(tok):
     return hmac.compare_digest(sig, _session_sig(exp))
 
 
+def _backup_config():
+    """Snapshot the current config before overwriting it, so a bad save (e.g. a UI edit that
+    wipes monitors) is always one copy away from recovery. Keeps the last 15."""
+    try:
+        bdir = os.path.join(os.path.dirname(os.path.abspath(CONFIG_PATH)), "config-backups")
+        os.makedirs(bdir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        shutil.copy2(CONFIG_PATH, os.path.join(bdir, f"config-{ts}.json"))
+        for old in sorted(glob.glob(os.path.join(bdir, "config-*.json")))[:-15]:
+            os.remove(old)
+    except Exception as e:
+        print(f"[config-backup] {e}", flush=True)
+
+
 def save_config_and_restart(new_cfg):
+    _backup_config()
     with open(CONFIG_PATH, "w") as f:
         json.dump(new_cfg, f, indent=2)
     threading.Timer(0.6, lambda: os.execv(

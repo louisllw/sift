@@ -25,7 +25,7 @@ LOG_PRIORITY="${SIFT_LOG_PRIORITY:-err}"
 LOG_MAX="${SIFT_LOG_MAX:-15}"
 LOG_IGNORE="${SIFT_LOG_IGNORE:-}"     # per-host extra noise to drop (regex, case-insensitive)
 # lines that commonly carry a scary word but aren't incidents; the server's AI does the real judging
-LOG_BENIGN='level=(info|debug)|(^| )0 errors?( |$)|no errors?\b|error[_-]log|errorlevel=0|warn(ing)?s?=0'
+LOG_BENIGN='level=(info|debug)|[0-9]Z? +(INFO|DEBUG|TRACE) |(^| )0 errors?( |$)|no errors?\b|error[_-]log|errorlevel=0|warn(ing)?s?=0|kex_exchange_identification'
 NOISE="$LOG_BENIGN"; [ -n "$LOG_IGNORE" ] && NOISE="$LOG_BENIGN|$LOG_IGNORE"
 mkdir -p "$STATE"
 
