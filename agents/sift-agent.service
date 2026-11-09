@@ -1,0 +1,21 @@
+[Unit]
+# Sift collector — one run (heartbeat, health checks, new error logs). Started every 5 min
+# by sift-agent.timer. Fetched by install.sh from the server.
+Description=Sift collector (health + error logs)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/sift-agent/sift-agent.sh
+TimeoutStartSec=4min
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+# /usr, /boot, /etc read-only; /var/tmp/sift-agent (its state + spool) stays writable
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictSUIDSGID=true

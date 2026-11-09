@@ -1,8 +1,9 @@
 [Unit]
 # Sift exec daemon — long-polls the server for read-only allowlisted diagnostics.
-# Install: copy sift-agentd.sh + agent.env into /opt/sift-agent/, then:
-#   sudo cp sift-agentd.service /etc/systemd/system/
-#   sudo systemctl enable --now sift-agentd
+# install.sh fetches this exact file from the server (it substitutes the install dir if
+# you used a custom SIFT_DIR). Manual install: put sift-agentd.sh + agent.env in
+# /opt/sift-agent/, then:
+#   sudo cp sift-agentd.service /etc/systemd/system/ && sudo systemctl enable --now sift-agentd
 Description=Sift exec daemon (read-only diagnostics)
 After=network-online.target docker.service
 Wants=network-online.target
@@ -10,17 +11,29 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Most diagnostics (smartctl, zpool, journalctl -u, docker) want root; the allowlist bounds
-# what can actually run. To run unprivileged instead, drop User= and grant the specific
-# sudoers/group rights those binaries need.
+# what can actually run.
 User=root
+EnvironmentFile=-/opt/sift-agent/agent.env
 ExecStart=/opt/sift-agent/sift-agentd.sh
 Restart=always
 RestartSec=5
-# defence in depth: the daemon only ever reads
+# Defence in depth: the daemon only ever reads. The filesystem is read-only to it except a
+# private /tmp (its scratch dir). Uninstall still works: it asks systemd (over D-Bus) to run
+# the teardown as a separate transient unit outside this sandbox.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/tmp/sift-agent
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+# no PrivateDevices: smartctl and zpool need the real /dev
 
 [Install]
 WantedBy=multi-user.target

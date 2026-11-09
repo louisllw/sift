@@ -48,6 +48,18 @@ setup and only interrupts you when something genuinely needs you.
 - **AI triage** — classifies each event (critical / urgent / routine / noise), summarises
   it, and groups events that share a root cause ("3 sites down = the tunnel, not 3 alarms").
   Works with **any OpenAI-compatible endpoint** (Ollama, vLLM, LM Studio, OpenAI, Groq…).
+- **Incidents, not alert spam** — related events join one incident with open → resolved state.
+  Repeats don't re-alert; recoveries close it ("✅ resolved after 47m"); history is kept so
+  the assistant can answer "did the mail server go down this week, and for how long?".
+- **Learns what's normal** — each event is fingerprinted (timestamps, IPs, ids stripped); a
+  shape it has already judged reuses that verdict without another LLM call.
+- **Investigates before it pings you** — on an urgent/critical incident it runs 2–3 relevant
+  read-only diagnostics on that host and replies under the alert with the likely cause.
+- **Talk back to alerts** — reply `ack` (stop reminders), `mute` / `mute 3d` (learned
+  suppression), `fixed` (close it) or `this mattered` (always alert on this kind). Unacked
+  criticals are re-sent every 2h (max 3). Optional quiet hours hold urgent (never critical) alerts.
+- **Watchdogs for things that should happen** — `expect` rules raise a critical when e.g. the
+  nightly "backup OK" message stops arriving.
 - **Knows your setup** — a plain-English `ai_context` you write once (your hosts, what
   matters, what's normal noise) steers triage, chat and the digest. The single biggest
   "make it smart" lever.
@@ -59,8 +71,9 @@ setup and only interrupts you when something genuinely needs you.
 - **ntfy-compatible ingest** — publishers that POST to ntfy migrate by changing only the
   URL. `POST /<topic>` with a text body, or `POST /notify` with JSON. Bearer, `X-Sift-Token`,
   or HTTP Basic auth.
-- **Fleet monitoring** — Sift actively checks your servers/services (HTTP/TCP) and alerts on
-  down → recovered, with state-change de-dup (no "still down" spam).
+- **Fleet monitoring** — Sift actively checks your servers/services (HTTP/TCP). A target must
+  fail twice in a row before it's DOWN (no blips), targets that fail together arrive as ONE
+  message, and state survives restarts.
 - **Host agents** — a tiny bash agent on each host (zero deps) reports health (disk / ZFS /
   SMART / unhealthy containers) and forwards error logs for the AI to triage. Dead-man's
   switch: if a host goes silent, Sift tells you.
@@ -69,8 +82,12 @@ setup and only interrupts you when something genuinely needs you.
   failed units, top procs, listening ports…) and read the output back. No shell, no inbound
   connections, nothing that can change anything.
 - **Ask it anything** (Telegram) — "are my servers up?", "why did X go down?", "what's eating
-  disk on host1?" — it checks the fleet and *runs diagnostics itself* to answer. Read-only,
-  allowlisted to you, with short-term conversation memory.
+  disk on host1?" — every message carries a live situation report (open incidents, recent
+  outages with durations, monitors, agents, noise), and it *runs diagnostics itself* to answer.
+  Read-only, allowlisted to you, with short-term memory. Every exchange is logged (Console →
+  Bot conversations) so a bad answer can be debugged.
+- **Reliable delivery** — alerts go through an outbox that retries for 24h, so a Telegram or
+  network blip never loses one.
 - **Web UI** — dashboard (fleet + agents + events), one-line agent installer, console,
   monitors, delivery/AI/ingest settings, raw config. Admin-password gated, offline-capable
   (no CDN).
@@ -100,7 +117,9 @@ docker compose up -d --build
 
 Or without Docker: `python3 sift.py data/config.json` (stdlib only, Python 3.9+).
 
-Open the web UI at `http://<host>:8130/`, set an admin password, and publish a test event:
+Open the web UI at `http://<host>:8130/` and set an admin password. First-run setup asks for a
+one-time **setup code** printed in the server log (`docker logs sift | grep "setup code"`), so
+nobody else can claim a fresh install. Then publish a test event:
 
 ```sh
 curl -H "Authorization: Bearer $INGEST_TOKEN" \
@@ -114,14 +133,22 @@ curl -H "Authorization: Bearer $INGEST_TOKEN" \
 From the web UI **Deploy** tab, or directly — run on the target host as root:
 
 ```sh
-curl -fsSL http://<your-sift>:8130/agent/install.sh \
-  | sudo SIFT_SERVER=http://<your-sift>:8130 SIFT_TOKEN=<ingest_token> SIFT_HOST=myhost bash
+curl -fsSL https://<your-sift>/agent/install.sh \
+  | sudo SIFT_SERVER=https://<your-sift> SIFT_TOKEN=<agent token> SIFT_HOST=myhost bash
 ```
 
 This installs two tiny components (pick with `SIFT_COMPONENTS=both|daemon|collector`):
 
-- **collector** (`cron */5`) — pushes health + error logs.
-- **exec daemon** (`systemd`) — long-polls for read-only diagnostic commands.
+- **collector** (systemd timer, every 5 min; cron where there's no systemd) — pushes health
+  (disk + inodes, ZFS, SMART, unhealthy / crash-looping / failed containers) and new error
+  logs. If Sift is unreachable it spools to disk and catches up later — nothing is lost.
+- **exec daemon** (`systemd`, sandboxed) — long-polls for read-only diagnostic commands.
+
+The same command **upgrades** a host in place — on an existing install a bare
+`curl -fsSL https://<your-sift>/agent/install.sh | sudo bash` keeps its server, token, host
+name and any extra settings in `/opt/sift-agent/agent.env`. Plain `http://` is only allowed
+for LAN addresses. The token is never put on a command line once installed (it lives in a
+`0600` file), so it doesn't show up in `ps`.
 
 Remote hosts use your public URL (e.g. `https://sift.example.com`) — it reuses whatever
 reverse proxy / tunnel you already have; no per-host tunnel needed. **Remove** a host any
@@ -156,8 +183,14 @@ Most of it is editable from the web UI.
 | `llm` | **Optional.** OpenAI-compatible endpoint + model (+ `api_key` for cloud). Remove to run rules-only. |
 | `ai_context` | Plain-English description of your setup; steers triage, chat and digest. |
 | `delivery.channel` | `telegram` \| `ntfy` \| `discord` \| `slack` \| `webhook` |
-| `ingest_token` | shared secret; publishers/agents send it as `Authorization: Bearer …`, `X-Sift-Token: …`, or Basic auth |
-| `monitors` | list of `{name, type: http\|tcp, url\|host+port}` to watch |
+| `ingest_token` | shared secret for publishers/webhooks, sent as `Authorization: Bearer …`, `X-Sift-Token: …`, or Basic auth. Empty or the example value = ingest refused. |
+| agent tokens | each host gets its own token from the **Deploy** tab (bound to that host name). `allow_shared_agent_token` lets old agents keep using `ingest_token` until their own token is first used. |
+| `monitors` | list of `{name, type: http\|tcp, url\|host+port, agent_host?}` to watch (`agent_host` lets auto-investigation run diagnostics on the right box) |
+| `expect` | `{name, match, source?, every_hours}` — critical if a matching event stops arriving |
+| `quiet_hours`, `timezone` | `{start:"23:00", end:"07:00"}` holds urgent alerts overnight; IANA timezone for quiet hours and the digest |
+| `auto_investigate`, `investigations_per_hour` | run diagnostics on urgent incidents and reply with a likely cause |
+| `untrusted_sources` | regex of sources whose text outsiders can influence (default `^(logs-\|security)`) — fenced off from the AI, never resolves alerts |
+| `monitor_confirm`, `renotify_hours`, `incident_stale_hours`, `retention_days` | tuning |
 | `critical_bypass` | regexes that push immediately, no LLM |
 | `mute_patterns` | regexes filed straight to the digest, never alerted |
 | `triage_interval_seconds`, `digest_hour_local`, … | timing |
@@ -171,6 +204,14 @@ Most of it is editable from the web UI.
   injection). Nothing in the menu can write, install, restart or delete.
 - **The Telegram chat is allowlisted** to your chat id(s) and cannot trigger uninstall or
   anything outside the read-only menu.
+- **Per-host agent tokens.** A host's token can only heartbeat, poll and answer commands for
+  that host — one leaked token can't impersonate the rest of the fleet.
+- **Log text is untrusted.** Forwarded logs and IDS alerts are triaged in a separate,
+  fenced-off batch, can never auto-resolve an alert, and reach the chat model only as short
+  labelled excerpts.
+- **Admin hardening:** first-run setup code, rate-limited login, sessions signed with a random
+  server secret, secrets masked in the UI/API, validated + atomic config saves, request size
+  limits and timeouts.
 - Keep `config.json` private — it holds your tokens. It (and `data/`, `*.db`, `compose.yml`)
   are git-ignored by default.
 

@@ -1,11 +1,15 @@
-# The Sift helper, as a container. Run it on any Docker host to report that host's
+# The Sift collector, as a container. Run it on any Docker host to report that host's
 # container health + error logs into your Sift server.
 #   docker compose -f compose.agent.example.yml up -d --build
-# For ZFS/SMART (physical disks) run the agent host-level instead (see agents/sift-agent.sh).
+# For ZFS/SMART (physical disks) and the exec daemon, install the agent host-level instead
+# (see agents/install.sh).
 FROM alpine:3.20
-RUN apk add --no-cache bash curl docker-cli coreutils util-linux
+# coreutils: GNU df --output / timeout / head -c;  util-linux: flock;  grep: GNU grep -E
+RUN apk add --no-cache bash curl docker-cli coreutils util-linux grep gawk sed
 COPY agents/sift-agent.sh /usr/local/bin/sift-agent
 RUN chmod +x /usr/local/bin/sift-agent
-ENV SIFT_INTERVAL=300
-# loop runner: run the agent, sleep, repeat — logs to stdout (docker logs)
+ENV SIFT_INTERVAL=300 SIFT_STATE=/state
+VOLUME /state
+# loop runner: run the agent, sleep, repeat — logs to stdout (docker logs). The agent keeps
+# its own epoch window, so the sleep and run time never open gaps in the log coverage.
 ENTRYPOINT ["/bin/sh","-c","while true; do /usr/local/bin/sift-agent || true; sleep \"${SIFT_INTERVAL:-300}\"; done"]

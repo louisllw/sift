@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the Sift collector every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20
+AccuracySec=30s
+Persistent=true
+Unit=sift-agent.service
+
+[Install]
+WantedBy=timers.target

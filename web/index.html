@@ -100,6 +100,7 @@
   /* events */
   .ev{display:grid;grid-template-columns:76px 1fr auto;align-items:baseline;gap:12px;padding:10px 16px}
   .ev+.ev{border-top:1px solid var(--line-2)}
+  .ev.inc{grid-template-columns:76px 1fr auto auto;align-items:center}
   .ev:hover{background:var(--neu-soft)}
   .pill{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;
     border-radius:999px;text-align:center;white-space:nowrap}
@@ -207,7 +208,7 @@ async function req(method,path,body){
   const r=await fetch(path,{method,headers:h,body:body?JSON.stringify(body):undefined});
   if(r.status===401){TOKEN="";localStorage.removeItem("sift_token");stopTimer();render();throw new Error("auth");}
   const t=await r.text(); let j={}; try{j=JSON.parse(t)}catch{j={raw:t}}
-  if(!r.ok) throw new Error(j.status||j.error||r.status); return j;
+  if(!r.ok) throw new Error((j.errors&&j.errors.join("; "))||j.status||j.error||r.status); return j;
 }
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function toast(msg,bad){const t=$("#toast");t.textContent=msg;t.className=bad?"bad show":"show";clearTimeout(t._h);t._h=setTimeout(()=>t.className="",2600);}
@@ -228,17 +229,19 @@ function authScreen(kind){
     <div class="mark">${ICON.logo}</div>
     <h1>${setup?"Welcome to Sift":"Sign in"}</h1>
     <p>${setup?"Set an admin password — it guards your tokens and keys.":"Enter the admin password for this console."}</p>
+    ${setup?`<label class="lbl">Setup code</label><input id="code" class="mono" placeholder="printed in the Sift server log" autocomplete="off">
+    <p class="hint">Run <span class="mono">docker logs sift | grep "setup code"</span> on the server. This stops strangers claiming a fresh install.</p>`:""}
     <label class="lbl">Password</label>
-    <input id="pw" type="password" placeholder="${setup?'at least 6 characters':'••••••••'}" autofocus
+    <input id="pw" type="password" placeholder="${setup?'at least 10 characters':'••••••••'}" ${setup?"":"autofocus"}
       onkeydown="if(event.key==='Enter')document.getElementById('go').click()">
     <button class="btn primary" id="go">${setup?"Create & continue":"Sign in"}</button>
     <p id="err" class="hint bad-t" style="min-height:14px;text-align:center"></p>
   </div></div>`;
   $("#go").onclick=async()=>{
     const pw=$("#pw").value;
-    try{const r=await req("POST",setup?"/admin/setup":"/admin/login",{password:pw});
+    try{const r=await req("POST",setup?"/admin/setup":"/admin/login",setup?{password:pw,setup_code:($("#code").value||"").trim()}:{password:pw});
       TOKEN=r.token;localStorage.setItem("sift_token",TOKEN);render();
-    }catch(e){$("#err").textContent=setup?(e.message||"Couldn't set password"):"Wrong password";}
+    }catch(e){$("#err").textContent=setup?(e.message||"Couldn't set password"):(/too many/.test(e.message)?e.message:"Wrong password");}
   };
 }
 
@@ -268,43 +271,57 @@ async function viewDashboard(){
   v.innerHTML=pageTop("Dashboard","Your fleet, at a glance.",
     `<button class="btn ghost sm" id="tTel">${ICON.bell}Test Telegram</button><button class="btn ghost sm" id="tAI">Test AI</button>`)
     +`<div id="status"></div>
+      <div class="panel"><div class="hd"><h2>Incidents</h2><span class="count" id="icount"></span></div><div class="bd" id="incidents">${skRows(2)}</div></div>
       <div class="panel"><div class="hd"><h2>Fleet</h2><span class="count" id="fcount"></span></div><div class="bd" id="fleet">${skRows(4)}</div></div>
       <div class="panel"><div class="hd"><h2>Helper agents</h2><span class="count" id="acount"></span></div><div class="bd" id="agents">${skRows(2)}</div></div>
       <div class="panel"><div class="hd"><h2>Recent events</h2></div><div class="bd" id="events">${skRows(4)}</div></div>`;
   $("#tTel").onclick=async(e)=>{e.target.disabled=true;try{const r=await req("POST","/admin/telegram/test");toast(r.ok?"Test alert sent to Telegram":"Telegram failed",!r.ok);}catch(x){toast(x.message,true);}e.target.disabled=false;};
   $("#tAI").onclick=async(e)=>{e.target.disabled=true;const r=await req("GET","/admin/llm/test");toast((r.ok?"AI reachable — ":"AI: ")+r.detail,!r.ok);e.target.disabled=false;};
-  window._rmAgent=async(host)=>{
+  $("#agents").addEventListener("click",async(ev)=>{
+    const b=ev.target.closest("button[data-host]"); if(!b)return; const host=b.dataset.host;
     if(!confirm(`Remove the Sift agent from "${host}"?\n\nIts exec daemon will disable and delete itself. (Needs the daemon running on that host.)`))return;
     try{await req("POST","/admin/agent/uninstall",{host});toast(`Uninstalling agent on ${host}…`);setTimeout(refreshDash,1600);}catch(e){toast(e.message,true);}
-  };
+  });
+  $("#incidents").addEventListener("click",async(ev)=>{
+    const b=ev.target.closest("button[data-inc]"); if(!b)return;
+    try{await req("POST","/admin/incident/resolve",{id:+b.dataset.inc});toast("Incident closed");refreshDash();}catch(e){toast(e.message,true);}
+  });
   await refreshDash();
   stopTimer(); TIMER=setInterval(()=>{if(TAB==="dashboard")refreshDash();},15000);
 }
 async function refreshDash(){
-  let fleet=[],agents=[],events=[];
+  let fleet=[],agents=[],events=[],incs=[];
+  try{incs=await req("GET","/admin/incidents");}catch(e){}
   try{fleet=await req("GET","/admin/fleet");}catch(e){}
   try{agents=await req("GET","/admin/agents");}catch(e){}
   try{events=await req("GET","/admin/events");}catch(e){}
   const mons=fleet.filter(f=>!f.note);
   const down=mons.filter(m=>m.status!=="up");
-  const crit=events.filter(e=>e.severity==="critical"||e.severity==="urgent");
+  const openInc=incs.filter(i=>i.state==="open"&&(i.severity==="critical"||i.severity==="urgent"));
   const silent=agents.filter(a=>a.silent);
-  const ok=!down.length&&!silent.length;
-  const issues=[...down.map(d=>d.server+" down"),...silent.map(s=>s.host+" silent")];
+  const ok=!down.length&&!silent.length&&!openInc.length;
+  const issues=[...openInc.map(i=>i.title),...silent.filter(s=>!openInc.some(i=>i.host===s.host)).map(s=>s.host+" silent")];
   $("#status").innerHTML=`<div class="status ${ok?'good':'bad'}"><div class="glyph">${ok?ICON.check:ICON.bell}</div>
     <div><div class="big">${ok?"All systems operational":issues.length+" issue"+(issues.length>1?"s need":" needs")+" attention"}</div>
-    <div class="sub">${ok?(mons.length+" targets monitored · "+crit.length+" unresolved alerts in events"):esc(issues.slice(0,3).join(" · "))}</div></div></div>`;
+    <div class="sub">${ok?(mons.length+" targets monitored · no open incidents"):esc(issues.slice(0,3).join(" · "))}</div></div></div>`;
   const hp=$("#health"); if(hp)hp.innerHTML=`<span class="dot ${ok?'ok live':'down'}"></span><span>${ok?"All operational":issues.length+" issue"+(issues.length>1?"s":"")}</span>`;
 
+  const shown=incs.slice(0,12);
+  $("#icount").textContent=incs.filter(i=>i.state==="open").length+" open";
+  $("#incidents").innerHTML=shown.length?shown.map(i=>`<div class="ev inc"><span class="pill ${i.state==='open'?esc(i.severity):'routine'}">${i.state==='open'?esc(i.severity):esc(i.state)}</span>
+    <span class="msg" title="${esc(i.findings||i.title)}"><span class="src">${esc(i.host||'')}</span> &nbsp;${esc(i.title)}${i.lasted?` <span class="dim-t">· lasted ${esc(i.lasted)}</span>`:''}${i.acked_at?' <span class="dim-t">· acked</span>':''}</span>
+    <span class="ago">${ago(i.opened_at)}</span>${i.state==='open'?`<button class="btn ghost sm" data-inc="${+i.id}">Close</button>`:'<span></span>'}</div>`).join("")
+    :`<div class="empty">${ICON.check}No incidents in the last 30 days.</div>`;
   $("#fcount").textContent=mons.length?`${mons.length-down.length}/${mons.length} up`:"";
   $("#fleet").innerHTML=mons.length?mons.map(m=>`<div class="row"><span class="dot ${m.status==='up'?'ok':'down'}"></span>
     <span class="name">${esc(m.server)}</span><span class="meta mono">${esc(m.detail||m.status)}</span></div>`).join("")
     :`<div class="empty">${ICON.monitors}No monitors yet — add servers under <b>Monitors</b>.</div>`;
 
-  $("#acount").textContent=agents.filter(a=>!a.note).length?agents.filter(a=>!a.note).length+" reporting":"";
-  $("#agents").innerHTML=agents.length&&!agents[0].note?agents.map(a=>`<div class="row"><span class="dot ${a.silent?'down':'ok'}"></span>
-    <span class="name">${esc(a.host)}</span><span class="meta mono">${a.silent?'silent':'last seen '+ago(a.last_seen)}</span>
-    <button class="btn ghost sm" style="margin-left:12px" onclick="window._rmAgent('${esc(a.host)}')">Remove</button></div>`).join("")
+  const real=agents.filter(a=>a.host);
+  $("#acount").textContent=real.filter(a=>a.last_seen).length?real.filter(a=>a.last_seen).length+" reporting":"";
+  $("#agents").innerHTML=real.length?real.map(a=>`<div class="row"><span class="dot ${!a.last_seen?'unk':a.silent?'down':'ok'}"></span>
+    <span class="name">${esc(a.host)}</span><span class="meta mono">${!a.last_seen?esc(a.note||'not installed yet'):(a.silent?'silent':'last seen '+ago(a.last_seen))}${a.version?' · v'+esc(a.version):''}${a.outdated?' · <span class="bad-t">outdated</span>':''}${a.last_seen&&!a.per_host_token?' · <span class="bad-t">shared token</span>':''}</span>
+    <button class="btn ghost sm" style="margin-left:12px" data-host="${esc(a.host)}">Remove</button></div>`).join("")
     :`<div class="empty">${ICON.deploy}No helpers yet — add one from the <b>Deploy</b> tab.</div>`;
 
   $("#events").innerHTML=events.length?events.map(e=>`<div class="ev"><span class="pill ${e.severity||'routine'}">${esc(e.severity||'·')}</span>
@@ -326,15 +343,23 @@ function viewDeploy(){
       <option value="daemon">Exec daemon only</option>
       <option value="collector">Metrics collector only</option>
     </select>
+    <div class="inline"><button class="btn primary" id="d_mint">${ICON.plus}Create install command</button><span class="hint" style="margin:0">Issues this host its own token (shown once). Re-running it for an existing host replaces that host's token.</span></div>
     <label class="lbl" style="margin-top:16px">Run on that host (needs root)</label>
-    <div class="codewrap"><pre class="code" id="d_out"></pre><button class="btn ghost sm" id="d_copy">${ICON.copy}Copy</button></div>
-    <p class="hint">Downloads the agent from this server, writes <span class="mono">/opt/sift-agent/agent.env</span>, and installs a systemd service and/or cron. You can remove it any time from the Dashboard → <b>Remove</b>.</p>
+    <div class="codewrap"><pre class="code" id="d_out">Pick a host label, then “Create install command”.</pre><button class="btn ghost sm" id="d_copy">${ICON.copy}Copy</button></div>
+    <p class="hint">Downloads the agent from this server, writes <span class="mono">/opt/sift-agent/agent.env</span>, installs the exec daemon and/or the collector timer. The <b>same command upgrades</b> an existing host (its extra settings are kept). Remove it any time from the Dashboard → <b>Remove</b>.</p>
   </div>`;
   $("#d_server").value=location.origin;
+  let TOK=null, TOKHOST=null;
+  const hostName=()=>($("#d_name").value||"").trim().replace(/[^A-Za-z0-9_.-]/g,"-");
   window._gen=()=>{
-    const n=(($("#d_name").value||"my-server").replace(/[^A-Za-z0-9_.-]/g,"-"));
-    const s=$("#d_server").value.replace(/\/+$/,""); const tok=CFG.ingest_token||"SET_INGEST_TOKEN"; const c=$("#d_comp").value;
-    $("#d_out").textContent=`curl -fsSL ${s}/agent/install.sh | sudo SIFT_SERVER=${s} SIFT_TOKEN=${tok} SIFT_HOST=${n} SIFT_COMPONENTS=${c} bash`;
+    const n=hostName(); const s=$("#d_server").value.replace(/\/+$/,""); const c=$("#d_comp").value;
+    if(!TOK||TOKHOST!==n){ $("#d_out").textContent="Pick a host label, then “Create install command”."; return; }
+    $("#d_out").textContent=`curl -fsSL ${s}/agent/install.sh | sudo SIFT_SERVER=${s} SIFT_TOKEN=${TOK} SIFT_HOST=${n} SIFT_COMPONENTS=${c} bash`;
+  };
+  $("#d_mint").onclick=async()=>{
+    const n=hostName(); if(!n){toast("Give the host a label first",true);return;}
+    try{const r=await req("POST","/admin/agent/token",{host:n}); TOK=r.token; TOKHOST=r.host; window._gen(); toast("Token created — copy the command now; it isn't shown again");}
+    catch(e){toast(e.message,true);}
   };
   $("#d_copy").onclick=()=>{const el=$("#d_out");const r=document.createRange();r.selectNodeContents(el);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);
     let done=false;try{navigator.clipboard.writeText(el.textContent);done=true;}catch(e){}try{if(!done)done=document.execCommand("copy");}catch(e){}
@@ -368,18 +393,25 @@ function viewSettings(){
       <p class="hint">Deterministic — your own “never ping me about this” list, applied before the AI even looks.</p>
     </div>
     <div class="grp">
-      ${fld("Ingest token (shared secret for agents/publishers)",CFG.ingest_token,"f_ingest",{mono:1})}
+      ${fld("Ingest token (shared secret for publishers / webhooks)",CFG.ingest_token,"f_ingest",{mono:1})}
+      <p class="hint">Secrets show as dots — leave them as they are to keep the current value.</p>
       ${fld("Daily digest hour (0–23, local)",CFG.digest_hour_local,"f_digest",{type:"number"})}
+      ${fld("Timezone (IANA name)",CFG.timezone||"","f_tz",{mono:1,ph:"Europe/London"})}
+      <div class="inline"><div style="flex:1">${fld("Quiet hours start",(CFG.quiet_hours||{}).start||"","f_qs",{mono:1,ph:"23:00"})}</div>
+        <div style="flex:1">${fld("Quiet hours end",(CFG.quiet_hours||{}).end||"","f_qe",{mono:1,ph:"07:00"})}</div></div>
+      <p class="hint">During quiet hours urgent alerts wait until morning. Criticals (drives, pools, backups) always come through.</p>
     </div>
   </div>`;
   $("#fetchid").onclick=async()=>{$("#idres").innerHTML='<span class="dim-t">checking…</span>';const r=await req("GET","/admin/telegram/chatid");
-    $("#idres").innerHTML=r.error?`<span class="bad-t">${esc(r.error)}</span>`:(r.chats&&r.chats.length?r.chats.map(c=>`<button class="btn ghost sm" onclick="document.getElementById('f_tgchat').value='${c.id}';window.toast&&toast('Set chat id ${c.id}')">${esc(String(c.name))}: ${c.id}</button>`).join(" "):`<span class="dim-t">${esc(r.hint||'no chats')}</span>`);};
+    $("#idres").innerHTML=r.error?`<span class="bad-t">${esc(r.error)}</span>`:(r.chats&&r.chats.length?r.chats.map(c=>`<button class="btn ghost sm" onclick="document.getElementById('f_tgchat').value='${+c.id}';window.toast&&toast('Set chat id ${+c.id}')">${esc(String(c.name))}: ${+c.id}</button>`).join(" "):`<span class="dim-t">${esc(r.hint||'no chats')}</span>`);};
   $("#save").onclick=()=>{
     CFG.delivery={...dl,channel:$("#f_channel").value};
     CFG.telegram={...tg,bot_token:$("#f_tgtok").value,chat_id:$("#f_tgchat").value,authorized_chat_ids:[$("#f_tgchat").value]};
     const u=$("#f_llmurl").value.trim();
     CFG.llm=u?{...llm,url:u,model:$("#f_llmmodel").value,api_key:$("#f_llmkey").value}:null;
     CFG.ingest_token=$("#f_ingest").value; CFG.digest_hour_local=+$("#f_digest").value;
+    CFG.timezone=$("#f_tz").value.trim()||undefined;
+    const qs=$("#f_qs").value.trim(), qe=$("#f_qe").value.trim(); CFG.quiet_hours=(qs&&qe)?{start:qs,end:qe}:undefined;
     CFG.ai_context=$("#f_ctx").value.trim();
     CFG.mute_patterns=$("#f_mute").value.split("\n").map(s=>s.trim()).filter(Boolean);
     saveConfig();
@@ -424,7 +456,13 @@ async function viewConsole(){
      </div>
      <div class="panel" id="c_resultpanel" style="display:none"><div class="hd"><h2>Output</h2><span class="count mono" id="c_status"></span></div>
        <div class="bd pad" style="padding-top:0"><pre class="code" id="c_output" style="margin-top:14px;max-height:380px"></pre></div></div>
-     <div class="panel"><div class="hd"><h2>Recent commands</h2></div><div class="bd" id="c_hist">${skRows(3)}</div></div>`;
+     <div class="panel"><div class="hd"><h2>Recent commands</h2></div><div class="bd" id="c_hist">${skRows(3)}</div></div>
+     <div class="panel"><div class="hd"><h2>Bot conversations</h2><span class="count">what you asked · what it looked up · what it said</span></div><div class="bd" id="c_chat">${skRows(2)}</div></div>`;
+  (async()=>{let c=[];try{c=await req("GET","/admin/chatlog");}catch(e){}
+    $("#c_chat").innerHTML=c.length?c.map(r=>{let tools=[];try{tools=JSON.parse(r.tools||"[]").map(t=>t.tool)}catch(e){}
+      return `<div class="row" style="display:block;padding:12px 18px"><div class="mono dim-t" style="font-size:11.5px">${ago(r.ts)}${tools.length?' · used '+esc(tools.join(', ')):''}${r.error?' · <span class="bad-t">'+esc(r.error)+'</span>':''}</div>
+        <div style="margin:4px 0"><b>You:</b> ${esc(r.user_text)}</div><div class="dim-t"><b>Sift:</b> ${esc(r.reply)}</div></div>`}).join("")
+      :`<div class="empty">${ICON.console}No conversations logged yet.</div>`;})();
   let spec={commands:[],hosts:[]};
   try{spec=await req("GET","/admin/exec/spec");}catch(e){}
   const hs=$("#c_host"), cs=$("#c_cmd");
