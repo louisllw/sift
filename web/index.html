@@ -346,6 +346,9 @@ function viewDeploy(){
     <div class="inline"><button class="btn primary" id="d_mint">${ICON.plus}Create install command</button><span class="hint" style="margin:0">Issues this host its own token (shown once). Re-running it for an existing host replaces that host's token.</span></div>
     <label class="lbl" style="margin-top:16px">Run on that host (needs root)</label>
     <div class="codewrap"><pre class="code" id="d_out">Pick a host label, then “Create install command”.</pre><button class="btn ghost sm" id="d_copy">${ICON.copy}Copy</button></div>
+    <div id="d_tokwrap" style="display:none"><label class="lbl" style="margin-top:16px">When it asks for the token, paste this (shown once)</label>
+    <div class="codewrap"><pre class="code" id="d_tok"></pre><button class="btn ghost sm" id="d_tokcopy">${ICON.copy}Copy</button></div>
+    <p class="hint">The token is typed at the prompt rather than put in the command, so it never shows up in <span class="mono">ps</span> or your shell history.</p></div>
     <p class="hint">Downloads the agent from this server, writes <span class="mono">/opt/sift-agent/agent.env</span>, installs the exec daemon and/or the collector timer. The <b>same command upgrades</b> an existing host (its extra settings are kept). Remove it any time from the Dashboard → <b>Remove</b>.</p>
   </div>`;
   $("#d_server").value=location.origin;
@@ -354,13 +357,15 @@ function viewDeploy(){
   window._gen=()=>{
     const n=hostName(); const s=$("#d_server").value.replace(/\/+$/,""); const c=$("#d_comp").value;
     if(!TOK||TOKHOST!==n){ $("#d_out").textContent="Pick a host label, then “Create install command”."; return; }
-    $("#d_out").textContent=`curl -fsSL ${s}/agent/install.sh | sudo SIFT_SERVER=${s} SIFT_TOKEN=${TOK} SIFT_HOST=${n} SIFT_COMPONENTS=${c} bash`;
+    $("#d_out").textContent=`curl -fsSL ${s}/agent/install.sh | sudo SIFT_SERVER=${s} SIFT_HOST=${n} SIFT_COMPONENTS=${c} bash`;
+    $("#d_tok").textContent=TOK; $("#d_tokwrap").style.display="";
   };
   $("#d_mint").onclick=async()=>{
     const n=hostName(); if(!n){toast("Give the host a label first",true);return;}
     try{const r=await req("POST","/admin/agent/token",{host:n}); TOK=r.token; TOKHOST=r.host; window._gen(); toast("Token created — copy the command now; it isn't shown again");}
     catch(e){toast(e.message,true);}
   };
+  $("#d_tokcopy").onclick=()=>{try{navigator.clipboard.writeText($("#d_tok").textContent);toast("Token copied");}catch(e){toast("Select it and copy",true);}};
   $("#d_copy").onclick=()=>{const el=$("#d_out");const r=document.createRange();r.selectNodeContents(el);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);
     let done=false;try{navigator.clipboard.writeText(el.textContent);done=true;}catch(e){}try{if(!done)done=document.execCommand("copy");}catch(e){}
     toast(done?"Copied to clipboard":"Select the text and press ⌘/Ctrl-C",!done);};

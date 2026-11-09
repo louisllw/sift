@@ -1,7 +1,7 @@
 #!/bin/bash
 # sift-agent — the Sift collector for any host. Dumb by design: it collects and POSTs,
 # all triage/AI/alerting lives in the Sift server. Zero dependencies (bash + curl).
-SIFT_AGENT_VERSION="2026.11.09"
+SIFT_AGENT_VERSION="2026.11.09.2"
 #
 #   Each run:
 #     1. heartbeat  -> server knows this host is alive (dead-man's switch)
@@ -33,6 +33,7 @@ KEEP_RE='auth\.failed|auth\.error|queue\.failed|delivery\.failed|security\.'
 BENIGN_RE='(^|[[:space:]])level=(info|debug|trace)([[:space:]]|$)'
 BENIGN_RE+='|^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+(Z|[+-][0-9:]+)?[[:space:]]+(INFO|DEBUG|TRACE)[[:space:]]'
 BENIGN_RE+='|kex_exchange_identification'
+BENIGN_RE+='|"level":"(info|debug)"'
 BENIGN_RE+='|(^|[^0-9])0 [Ee]rrors?([^A-Za-z]|$)|errorlevel=0|warn(ing)?s?=0'
 # What counts as an error line in a container's log (grep -iE; no \b so busybox grep works too).
 DOCKER_ERR_RE='error|fatal|panic|exception|traceback|segfault|critical|(^|[^a-z])fail(ed|ure|s)?([^a-z]|$)'
@@ -300,14 +301,25 @@ collect_journal() {   # -> $JLINES, and $JCURSOR_TMP to commit on success
         rm -f "$JCURSOR_TMP"
         if [ -s "$STATE/journal.cursor" ]; then
             cp -f "$STATE/journal.cursor" "$JCURSOR_TMP"
+            args+=(--cursor-file "$JCURSOR_TMP")
         else
-            args+=(--since "@$LAST_EPOCH")
+            # First run: journalctl refuses --since together with --cursor-file (systemd 259+), and a
+            # cursor file alone would replay the whole journal. So: note where the journal ends NOW,
+            # read this window by time, and start the cursor from that point next run.
+            local seed
+            seed="$(journalctl -n 1 --show-cursor -q -o cat 2>/dev/null | sed -n 's/^-- cursor: //p' | tail -1)"
+            [ -n "$seed" ] && printf '%s' "$seed" > "$JCURSOR_TMP"
+            args+=(--since "@$LAST_EPOCH" --until "@$NOW_EPOCH")
         fi
-        args+=(--cursor-file "$JCURSOR_TMP")
     else
         args+=(--since "@$LAST_EPOCH" --until "@$NOW_EPOCH")   # older systemd: exact epoch window
     fi
-    JLINES="$(timeout 30 journalctl "${args[@]}" 2>/dev/null | filter_lines | collapse_lines | tail -n "$LOG_MAX")"
+    local jerr="$STATE/journal.err"
+    JLINES="$(timeout 30 journalctl "${args[@]}" 2>"$jerr" | filter_lines | collapse_lines | tail -n "$LOG_MAX")"
+    if [ -s "$jerr" ]; then     # never fail silently again: surface journalctl's own complaint once
+        JLINES+=$'\n'"sift-agent: journalctl problem: $(head -c 300 "$jerr" | tr '\n' ' ')"
+    fi
+    rm -f "$jerr"
 }
 
 collect_docker_logs() {   # -> $DLINES
@@ -373,7 +385,12 @@ main() {
         echo "[sift-agent] SIFT_HOST '$HOST' is invalid (letters, digits, . _ - only, max 64)" >&2; exit 2
     fi
     umask 077
+    if [ -L "$STATE" ]; then echo "[sift-agent] state dir $STATE is a symlink — refusing" >&2; exit 2; fi
     mkdir -p "$STATE/spool" && chmod 700 "$STATE" 2>/dev/null
+    # running as root but the state dir was left by an older non-root install: take it over
+    if [ "$(id -u)" = 0 ] && [ "$(stat -c %u "$STATE" 2>/dev/null || echo 0)" != 0 ]; then
+        chown -hR 0:0 "$STATE" 2>/dev/null
+    fi
 
     # one run at a time (a hung mount or slow smartctl must not let runs pile up)
     if command -v flock >/dev/null 2>&1; then

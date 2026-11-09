@@ -1,6 +1,6 @@
 #!/bin/bash
 # sift-agentd — the Sift exec daemon.
-SIFT_AGENT_VERSION="2026.11.09"
+SIFT_AGENT_VERSION="2026.11.09.2"
 #
 # Long-polls the Sift server for READ-ONLY, allowlisted diagnostic commands, runs each one
 # with NO shell (argv array only — so ; | $() `` redirects can't be injected), and POSTs the

@@ -44,12 +44,12 @@
   ],
   "_comment_critical_bypass": "Regexes matched against title+body. A hit pushes IMMEDIATELY without the LLM — the deterministic safety rail for things that must never be missed or delayed.",
   "critical_bypass": [
-    "(?i)\\bDEGRADED\\b",
-    "(?i)\\bFAULTED\\b",
-    "(?i)(zfs|zpool|raid|smart).*(fail|error)",
-    "(?i)backup.*(fail|error|missed)",
-    "(?i)disk.*(full|100%)",
-    "(?i)\\bno space left\\b"
+    "(?i)\\b(pool|zpool|raid|array|mirror|raidz\\d?|state:)\\b.*\\b(DEGRADED|FAULTED|UNAVAIL|SUSPENDED)\\b",
+    "(?i)S\\.?M\\.?A\\.?R\\.?T.*\\b(FAILED|FAILING|pending sector|reallocated sector)",
+    "(?i)backup.*\\b(failed|failure|missed|stale|overdue)\\b",
+    "(?i)fail(ed|ure)? to back ?up",
+    "(?i)\\bno space left\\b",
+    "(?i)disk.*\\b(full|100%)"
   ],
   "_comment_ai_context": "Plain-English description of YOUR setup (hosts, what matters most, what's usually just noise). Injected into triage, chat and the digest so the AI judges what matters here. The single biggest 'make it smart' lever — also editable from the web UI. Leave empty to skip.",
   "ai_context": "",
@@ -66,6 +66,7 @@
     {
       "name": "nightly backup",
       "match": "(?i)backup (ok|completed)",
+      "source": "backups",
       "every_hours": 26
     }
   ],
@@ -78,5 +79,7 @@
   "monitor_confirm": 2,
   "renotify_hours": 2,
   "incident_stale_hours": 24,
-  "retention_days": 60
+  "retention_days": 60,
+  "_comment_trusted_proxies": "CIDRs of your reverse proxy / tunnel. X-Forwarded-For is only believed from these (for login rate limits). Leave empty if Sift isn't behind a proxy.",
+  "trusted_proxies": []
 }

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Sift agent installer — served by the Sift server at /agent/install.sh.
-SIFT_AGENT_VERSION="2026.11.09"
+SIFT_AGENT_VERSION="2026.11.09.2"
 # Sets up, on the host you run it on, either/both of:
 #   * the exec DAEMON (sift-agentd, systemd) — runs read-only allowlisted diagnostics on demand
 #   * the COLLECTOR (sift-agent, systemd timer every 5 min; cron if there's no systemd) —
@@ -158,9 +158,14 @@ env_get() { grep -E "^$2=" "$1" 2>/dev/null | tail -n1 | cut -d= -f2- | sed -E '
 is_lan_url() {
     local h="${1#*://}"; h="${h%%/*}"; h="${h##*@}"
     case "$h" in \[*) h="${h%%]*}"; h="${h#[}" ;; *) h="${h%%:*}" ;; esac
+    if [[ "$h" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then   # numeric ranges only for real IPv4 literals
+        case "$h" in                                           # ("10.evil.com" must not count as LAN)
+            127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
     case "$h" in
-        localhost|127.*|10.*|192.168.*|::1|*.local|*.lan|*.internal|*.home.arpa) return 0 ;;
-        172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+        localhost|::1|*.local|*.lan|*.internal|*.home.arpa) return 0 ;;
         *.*) return 1 ;;
         *) return 0 ;;   # single-label name (e.g. a docker service name like "sift")
     esac
