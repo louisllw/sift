@@ -839,6 +839,17 @@ def _save_mon(name, st):
            (name, 1 if st["up"] else 0, st["detail"], st["since"], st["fails"]))
 
 
+def _monitor_since_from_history(name):
+    """When a monitor has no persisted state yet, its 'up since' is the last recovery we recorded
+    (or the first time we ever saw it) — not the moment Sift happened to start."""
+    r = _one("SELECT ts FROM events WHERE source='monitor' AND title=? ORDER BY id DESC LIMIT 1",
+             (f"{name} recovered",))
+    if not r:
+        r = _one("SELECT ts FROM events WHERE source='monitor' AND title LIKE ? ORDER BY id LIMIT 1", (f"{name} %",))
+    d = parse_ts(r["ts"]) if r else None
+    return d.timestamp() if d else time.time()
+
+
 def monitor_sweep(mons):
     confirm = int(CFG.get("monitor_confirm", 2))
     downs, ups = [], []
@@ -847,8 +858,8 @@ def monitor_sweep(mons):
         ok, detail = check_monitor(m)
         with MON_LOCK:
             st = MON_STATE.get(name)
-            if st is None:                            # first sight ever (no persisted state)
-                st = {"up": True, "since": time.time(), "detail": detail, "fails": 0}
+            if st is None:                            # first sight ever: take "since" from history if we can
+                st = {"up": True, "since": _monitor_since_from_history(name), "detail": detail, "fails": 0}
             st["detail"] = detail
             if ok:
                 st["fails"] = 0
